@@ -97,7 +97,9 @@ because generated requests tend to be cleaner than real ones.
 Plugin authors can use `skillcheck gen --plugin plugin-name` to draft cases only
 for that installed plugin's skills. After adding a skill, `skillcheck gen
 --append skillcheck.yaml` drafts only skills the file does not cover, skips
-duplicate queries, and preserves existing YAML comments.
+duplicate queries, and preserves existing YAML comments. `--per-skill 6` asks
+for more requests per skill (default 4, plus half as many near misses). All
+options: [Commands](commands.md#gen).
 
 ## From skill-creator
 
@@ -120,3 +122,5 @@ suite goes to stdout, so it can be merged into an existing file by hand.
 - `--skill find-bug,test-guard`: only the cases that mention those skills,
   which is what you want after editing one skill.
 - `--only 3,cart-flaky`: chosen cases by number or `id`.
+
+The other `run` options are in [Commands](commands.md#run).

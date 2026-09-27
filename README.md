@@ -32,6 +32,19 @@ skillcheck run --batch        # cheap pre-check: one call per 25 cases
 skillcheck run --only 2,5     # confirm what the batch flagged with real runs
 ```
 
+| Command | What it does |
+|---|---|
+| `init` | starter `skillcheck.yaml` with your skill names, free |
+| `gen` | the model drafts cases from your descriptions, for you to review |
+| `import` | turns a skill-creator trigger eval set into cases |
+| `check` | validates the file and catches misspelled or renamed skills, free |
+| `lint` | short or look-alike descriptions, free |
+| `list` | the skills and commands Claude Code sees, free |
+| `run` | runs the cases; `--batch` for the cheap pre-check |
+
+Every option, the default file lookup and exit codes are in
+[Commands](docs/commands.md).
+
 No cases yet? `skillcheck gen -o skillcheck.yaml` lets the model draft them from
 your skill descriptions, for you to review. Coming from Anthropic's
 skill-creator? `skillcheck import eval_set.json --skill <name>` converts its
@@ -99,12 +112,11 @@ sounds like an existing one, install a plugin, or switch models.
 
 | | |
 |---|---|
+| [Commands](docs/commands.md) | every command and option, exit codes |
 | [Writing cases](docs/writing-cases.md) | the file format, what makes a good case, `gen` and `import` |
 | [Cost](docs/cost.md) | what a run costs and how to spend less |
-| [Reports and CI](docs/ci.md) | confusion block, reports, GitHub Actions, baseline, exit codes |
+| [Reports and CI](docs/ci.md) | confusion block, reports, GitHub Actions, comparing with `main` |
 | [How it works](docs/how-it-works.md) | what happens inside a run, and the limits of each level |
-
-`skillcheck --help` lists every command and option.
 
 ## Status
 

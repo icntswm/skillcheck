@@ -19,42 +19,19 @@ to narrow the skill on the right, not to widen the one on the left.
 
 ## Machine-readable reports
 
-- `--json report.json` writes every case, run, verdict and cost. `--json -`
-  writes it to stdout and moves the terminal report to stderr.
-- `--junit skillcheck.xml` writes JUnit XML that GitLab and GitHub show as a
-  test report. A misrouted case is a failure, a case where every run errored
-  is an error, a case skipped by `--budget` is skipped.
-- `--markdown report.md` writes a short summary for a pull request comment or
-  a job summary: a header with the counts, a table of the failed and skipped
-  cases, the passed ones folded, and the confusion block.
-- `--baseline report.json` compares the run with an earlier JSON report.
-- `--only-new-failures` exits 1 only for regressed or new failing cases, or
-  cases the budget skipped; it requires `--baseline`. A case the baseline
-  skipped counts as new. Cases left out by `--only` or `--skill` do not count
-  as removed.
+- `--json report.json`: every case, run, verdict and cost. `--json -` writes
+  it to stdout and moves the terminal report to stderr.
+- `--junit skillcheck.xml`: JUnit XML that GitLab and GitHub show as a test
+  report. A misrouted case is a failure, a case where every run errored is an
+  error, a case skipped by `--budget` is skipped.
+- `--markdown report.md`: a short summary for a pull request comment or a job
+  summary: a header with the counts, a table of the failed and skipped cases,
+  the passed ones folded, and the confusion block.
 
-## Exit codes
-
-| Code | Meaning |
-|---|---|
-| 0 | all cases passed |
-| 1 | some case failed or was skipped by the budget |
-| 2 | config or environment error, or the agent cannot run (not logged in) |
-
-## Testing a repository's skills
-
-Your machine has its own skills and plugins, and they compete with the ones
-under test. `--config-dir` points Claude Code at a separate config directory,
-so a run sees only the skills you put there:
-
-```
-mkdir -p .skillcheck/skills
-cp -R skills/. .skillcheck/skills/
-skillcheck run --config-dir .skillcheck
-```
-
-A fresh config directory is not logged in. Set `ANTHROPIC_API_KEY`, or
-`CLAUDE_CODE_OAUTH_TOKEN` made by `claude setup-token`.
+Exit codes and every other option: [Commands](commands.md). To run only the
+skills of a repository, not the ones installed on your machine, see
+[`--config-dir`](commands.md#where-skills-come-from); the action below does
+this for you.
 
 ## GitHub Actions
 
@@ -98,6 +75,7 @@ jobs:
 | `comment` | `true` | post the report as a pull request comment |
 | `github-token` | `github.token` | token for that comment |
 | `version` | `latest` | skillcheck version to install |
+| `claude-code-version` | `latest` | Claude Code version to install |
 
 The report lands in the job summary and, on pull requests, in a comment. A
 rerun edits that comment instead of adding a new one. Without
@@ -114,6 +92,12 @@ Outputs, for the steps after it:
 | `json`, `markdown` | paths to the reports |
 
 ### Comparing with main
+
+`--baseline report.json` compares a run with an earlier JSON report and marks
+each case regressed, fixed or new. `--only-new-failures` then exits 1 only for
+regressed or new failing cases, or cases the budget skipped. A case the
+baseline skipped counts as new; cases left out by `--only` or `--skill` do not
+count as removed.
 
 The workflow on `push` to `main` can save a baseline from the action output:
 
@@ -151,7 +135,9 @@ The pull request workflow restores that cache and passes it to the action:
     args: --only-new-failures
 ```
 
-Caches of the default branch are visible to pull requests. With `--only-new-failures`, a known failure does not block unrelated PRs, but it still shows in the comment.
+Caches of the default branch are visible to pull requests. With
+`--only-new-failures`, a known failure does not block unrelated pull requests,
+but it still shows in the comment.
 
 A failing case fails the step, so a step that reads the outputs needs
 `if: always()`. `skillcheck.xml` still works with `actions/upload-artifact`
