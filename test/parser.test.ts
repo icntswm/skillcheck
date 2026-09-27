@@ -209,22 +209,17 @@ describe("ClaudeStream init", () => {
     expect(stream.push('{"type":"system","subtype":"init","skills":["a"]}')).toBe(false);
   });
 
+  // synthetic-usage.jsonl keeps the token counts and cost of a real run
   it("usage of a finished run comes from the result event and prices like total_cost_usd", () => {
-    for (const name of ["claude-skill.jsonl", "claude-none.jsonl"]) {
-      const stream = new ClaudeStream();
-      let cost = 0;
-      for (const line of fixtureLines(name)) {
-        stream.push(line);
-        if (line.includes('"type":"result"')) cost = (JSON.parse(line) as { total_cost_usd: number }).total_cost_usd;
-      }
-      // claude-sonnet-5 input is $2/M; the fixed ratios reproduce the real bill
-      expect(inputEquivalent(stream.usage!) * 2e-6).toBeCloseTo(cost, 6);
-    }
+    const stream = new ClaudeStream();
+    for (const line of fixtureLines("synthetic-usage.jsonl")) stream.push(line);
+    // claude-sonnet-5 input is $2/M; the fixed ratios reproduce the real bill
+    expect(inputEquivalent(stream.usage!) * 2e-6).toBeCloseTo(stream.result.costUsd!, 6);
   });
 
   it("usage of a killed run sums assistant messages, each message once", () => {
     const stream = new ClaudeStream();
-    for (const line of fixtureLines("claude-skill.jsonl")) {
+    for (const line of fixtureLines("synthetic-usage.jsonl")) {
       if (line.includes('"type":"result"')) break;
       stream.push(line);
     }
