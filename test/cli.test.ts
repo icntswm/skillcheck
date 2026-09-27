@@ -336,6 +336,101 @@ describe("cli run", () => {
     expect(calls.map((c) => c.query)).toEqual(["why does it fail"]);
     expect(out.text).toContain("1 cases × 1 repeat × 1 agent = 1 runs");
   });
+
+  it("reuses passed cases and reports cached runs", async () => {
+    const file = writeCases("cases.json", { cases: [{ query: "q", expect: ["find-bug"] }] });
+    const cache = path.join(tmp, "cache.json");
+    const json = path.join(tmp, "report.json");
+    const calls: RunOptions[] = [];
+    const adapter = fakeAdapter({ q: { loaded: ["find-bug"] } }, calls);
+    expect(await main(["run", file, "--cache", cache], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter })).toBe(0);
+    const out = new Sink();
+    expect(await main(["run", file, "--cache", cache, "--json", json], { stdout: out, stderr: out, cwd: tmp }, { adapter })).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(out.text).toContain("(cached)");
+    expect(out.text).toContain("1 cached");
+    expect(JSON.parse(readFileSync(json, "utf8"))).toMatchObject({ summary: { cached: 1, runs: 0, costUsd: 0 }, cases: [{ cached: true }] });
+  });
+
+  it("does not cache failures, handles missing and malformed caches, and resolves relative paths from io.cwd", async () => {
+    const file = writeCases("cases.json", { cases: [{ query: "q", expect: ["find-bug"] }] });
+    const cache = path.join(tmp, "relative-cache.json");
+    const calls: RunOptions[] = [];
+    const failing = fakeAdapter({ q: { loaded: [] } }, calls);
+    const first = new Sink();
+    expect(await main(["run", file, "--cache", "relative-cache.json"], { stdout: first, stderr: first, cwd: tmp }, { adapter: failing })).toBe(1);
+    expect(first.text).toContain("no cache at relative-cache.json");
+    expect(JSON.parse(readFileSync(cache, "utf8")).entries).toHaveLength(0);
+    const second = new Sink();
+    expect(await main(["run", file, "--cache", "relative-cache.json"], { stdout: second, stderr: second, cwd: tmp }, { adapter: failing })).toBe(1);
+    expect(calls).toHaveLength(2);
+
+    writeFileSync(cache, "{");
+    const malformed = new Sink();
+    expect(await main(["run", file, "--cache", "relative-cache.json"], { stdout: malformed, stderr: malformed, cwd: tmp }, { adapter: fakeAdapter({ q: { loaded: ["find-bug"] } }) })).toBe(0);
+    expect(malformed.text).toContain("ignoring cache");
+    expect(JSON.parse(readFileSync(cache, "utf8")).tool).toBe("skillcheck-cache");
+  });
+
+  it("invalidates routing cache entries only when frontmatter changes", async () => {
+    const skill = path.join(tmp, ".claude", "skills", "project-skill");
+    const config = path.join(tmp, "empty-config");
+    mkdirSync(skill, { recursive: true });
+    mkdirSync(config);
+    const skillFile = path.join(skill, "SKILL.md");
+    writeFileSync(skillFile, "---\ndescription: route this\n---\noriginal body\n");
+    const file = writeCases("cases.json", { cases: [{ query: "q", expect: ["find-bug"] }] });
+    const cache = path.join(tmp, "cache.json");
+    const calls: RunOptions[] = [];
+    const adapter = fakeAdapter({ q: { loaded: ["find-bug"] } }, calls);
+    const run = () => main(["run", file, "--cache", cache, "--config-dir", config], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter });
+    expect(await run()).toBe(0);
+    writeFileSync(skillFile, "---\ndescription: route this\n---\nchanged body\n");
+    expect(await run()).toBe(0);
+    writeFileSync(skillFile, "---\ndescription: route differently\n---\nchanged body\n");
+    expect(await run()).toBe(0);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("preserves unselected cache entries and does not charge cached cases to budget", async () => {
+    const file = writeCases("cases.json", { cases: [
+      { query: "q1", expect: ["find-bug"] }, { query: "q2", expect: ["find-bug"] },
+    ] });
+    const cache = path.join(tmp, "cache.json");
+    const initial = fakeAdapter({ q1: { loaded: ["find-bug"] }, q2: { loaded: ["find-bug"] } });
+    expect(await main(["run", file, "--cache", cache], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter: initial })).toBe(0);
+    const calls: RunOptions[] = [];
+    const out = new Sink();
+    expect(await main(["run", file, "--cache", cache, "--only", "1", "--budget", "0.05"], { stdout: out, stderr: out, cwd: tmp }, { adapter: fakeAdapter({}, calls) })).toBe(0);
+    expect(calls).toHaveLength(0);
+    expect(JSON.parse(readFileSync(cache, "utf8")).entries).toHaveLength(2);
+  });
+
+  it("leaves cached cases out of batch prompts and does not reuse batch cache in normal mode", async () => {
+    const file = writeCases("cases.json", { cases: [
+      { query: "q1", expect: ["find-bug"] }, { query: "q2", expect: ["find-bug"] },
+    ] });
+    const cache = path.join(tmp, "cache.json");
+    const batchCalls: BatchOptions[] = [];
+    const batch = (calls: BatchOptions[]): AgentAdapter => ({
+      name: "claude",
+      async run(): Promise<RunResult> { throw new Error("unexpected normal call"); },
+      async runBatch(opts: BatchOptions): Promise<BatchResult> {
+        calls.push(opts);
+        return { structured: { answers: [{ n: 1, skills: ["find-bug"] }, { n: 2, skills: ["find-bug"] }] }, text: "", costUsd: 0.01, error: null, durationMs: 1 };
+      },
+    });
+    expect(await main(["run", file, "--batch", "--cache", cache], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter: batch(batchCalls) })).toBe(0);
+    writeFileSync(file, JSON.stringify({ cases: [{ query: "q1", expect: ["find-bug"] }, { query: "q2", expect: ["other"] }] }));
+    const secondCalls: BatchOptions[] = [];
+    expect(await main(["run", file, "--batch", "--cache", cache], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter: batch(secondCalls) })).toBe(1);
+    expect(secondCalls).toHaveLength(1);
+    expect(secondCalls[0]?.prompt).toContain('1. "q2"');
+    expect(secondCalls[0]?.prompt).not.toContain('"q1"');
+    const normalCalls: RunOptions[] = [];
+    expect(await main(["run", file, "--cache", cache], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter: fakeAdapter({ q1: { loaded: ["find-bug"] }, q2: { loaded: ["other"] } }, normalCalls) })).toBe(0);
+    expect(normalCalls).toHaveLength(2);
+  });
 });
 
 describe("cli run: fatal errors", () => {

@@ -64,6 +64,7 @@ export interface SkillList {
 
 export interface AgentAdapter {
   name: string;
+  version?(): Promise<string | null>;
   run(opts: RunOptions): Promise<RunResult>;
   /** one call answers many cases; agents without batch mode omit it */
   runBatch?(opts: BatchOptions): Promise<BatchResult>;

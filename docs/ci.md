@@ -70,6 +70,7 @@ jobs:
 | `model`, `repeat`, `threshold` | suite values | overrides |
 | `budget` | `5` | spending cap in USD |
 | `baseline` | | path to an earlier `--json` report to compare with |
+| `cache` | | path of a result cache file for `--cache`; empty disables it |
 | `junit` | `skillcheck.xml` | JUnit report path, empty disables it |
 | `args` | | extra arguments for `skillcheck run`, split on whitespace: quotes are not parsed, so a path with spaces does not fit |
 | `comment` | `true` | post the report as a pull request comment |
@@ -143,6 +144,42 @@ Caches of the default branch are visible to pull requests. Until the first
 baseline is saved, the action runs without the comparison and ignores
 `--only-new-failures`, so every failure counts. After that, a known failure
 does not block unrelated pull requests, but it still shows in the comment.
+
+### Reusing results
+
+`--cache <file>` (the action's `cache` input) skips a case that passed before
+when nothing that affects its routing changed: the case itself, the frontmatter
+of any skill or command, the model, the agent and its version, batch mode.
+Failed and skipped cases always run again. Reused cases are marked cached and
+cost nothing.
+
+Editing a skill's body (everything after the frontmatter) does not invalidate
+the cache, since only descriptions and other frontmatter affect routing.
+Editing any description, installing a plugin, or using a new Claude Code
+version reruns everything; the action installs the latest version by default,
+so pin it with `claude-code-version` when needed.
+
+```yaml
+- uses: actions/cache/restore@v4
+  with:
+    path: skillcheck-cache.json
+    key: skillcheck-cache-${{ github.run_id }}
+    restore-keys: skillcheck-cache-
+- uses: icntswm/skillcheck@v1
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  with:
+    cache: skillcheck-cache.json
+- if: always()
+  uses: actions/cache/save@v4
+  with:
+    path: skillcheck-cache.json
+    key: skillcheck-cache-${{ github.run_id }}
+```
+
+The key uses `run_id`, so every run saves a fresh cache. The `restore-keys`
+prefix picks the most recent cache available to the branch; pull requests can
+also read caches from the default branch.
 
 A failing case fails the step, so a step that reads the outputs needs
 `if: always()`. `skillcheck.xml` still works with `actions/upload-artifact`

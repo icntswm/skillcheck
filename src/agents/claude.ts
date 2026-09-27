@@ -321,6 +321,31 @@ function withLoginHint(error: string | null, configDir: string | undefined): str
 export class ClaudeAdapter implements AgentAdapter {
   readonly name = "claude";
 
+  async version(): Promise<string | null> {
+    const bin = process.env.SKILLCHECK_CLAUDE_BIN || "claude";
+    return await new Promise<string | null>((resolve) => {
+      let child: ChildProcess;
+      try {
+        child = spawn(bin, ["--version"], { stdio: ["ignore", "pipe", "ignore"] });
+      } catch {
+        resolve(null);
+        return;
+      }
+      let stdout = "";
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        resolve(null);
+      }, 10_000);
+      child.stdout?.setEncoding("utf8");
+      child.stdout?.on("data", (chunk: string) => { stdout += chunk; });
+      child.on("error", () => { clearTimeout(timer); resolve(null); });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        resolve(code === 0 ? stdout.trim() || null : null);
+      });
+    });
+  }
+
   async run(opts: RunOptions): Promise<RunResult> {
     const bin = process.env.SKILLCHECK_CLAUDE_BIN || "claude";
     const workdir = await mkdtemp(path.join(os.tmpdir(), "skillcheck-"));

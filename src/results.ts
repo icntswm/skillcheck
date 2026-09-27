@@ -28,6 +28,7 @@ export interface SuiteReport {
     diagnoses: number;
     budgetUsd: number | null;
     budgetReached: boolean;
+    cached?: number;
   };
   unavailable: string[];
   confusion: ConfusionPair[];
@@ -52,6 +53,7 @@ export interface CaseReport {
   /** [] for skipped cases */
   runs: RunVerdict[];
   change: Change | null;
+  cached?: boolean;
 }
 
 /** A planned case with its result; result === null means the budget skipped it. */
@@ -84,14 +86,15 @@ export interface ReportInput {
   baselineFile?: string;
   /** every case of the cases file, filtered out ones included */
   suiteCases?: { id: string | null; query: string }[];
+  cached?: boolean[];
 }
 
 /** The single source of truth for --json and --junit; computed once per run. */
 export function buildReport(input: ReportInput): SuiteReport {
-  const verdicts = input.cases.flatMap((e) => e.result?.runs ?? []);
+  const verdicts = input.cases.flatMap((e, i) => input.cached?.[i] ? [] : (e.result?.runs ?? []));
   const costs = [...verdicts.map((v) => v.costUsd), ...(input.skippedRunCosts ?? [])];
   const known = costs.filter((c): c is number => c !== null);
-  const cases = input.cases.map(toCaseReport);
+  const cases = input.cases.map((e, i) => toCaseReport(e, input.cached?.[i] ?? false));
   const comparison = input.baseline ? compare(cases, input.baseline, input.baselineFile ?? input.baseline.file, input.suiteCases ?? cases) : null;
   return {
     tool: "skillcheck",
@@ -113,6 +116,7 @@ export function buildReport(input: ReportInput): SuiteReport {
       diagnoses: verdicts.filter((v) => v.diagnosis).length,
       budgetUsd: input.budgetUsd,
       budgetReached: input.budgetReached,
+      cached: input.cached?.filter(Boolean).length ?? 0,
     },
     unavailable: input.unavailable,
     confusion: input.confusion,
@@ -121,7 +125,7 @@ export function buildReport(input: ReportInput): SuiteReport {
   };
 }
 
-function toCaseReport(e: ReportCase): CaseReport {
+function toCaseReport(e: ReportCase, cached: boolean): CaseReport {
   const c = e.c;
   return {
     index: c.index,
@@ -138,5 +142,6 @@ function toCaseReport(e: ReportCase): CaseReport {
     threshold: e.result?.threshold ?? e.threshold,
     runs: e.result?.runs ?? [],
     change: null,
+    cached,
   };
 }

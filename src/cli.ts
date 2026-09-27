@@ -33,6 +33,7 @@ import { runPool } from "./pool.js";
 import { oneLine, Reporter, type ReportStream } from "./report.js";
 import { buildReport, type SuiteReport } from "./results.js";
 import { readVersion } from "./version.js";
+import { caseFingerprint, mergeCache, parseCache, routingContext, type CacheEntry, type CacheFile } from "./cache.js";
 
 const USAGE = `skillcheck — regression tests for agent skill routing
 
@@ -65,6 +66,7 @@ run options:
       --markdown <path>  Markdown summary (PR comments, GitHub job summary) to path
       --baseline <path>  earlier --json report: mark regressed, fixed and new cases
       --only-new-failures  exit 1 only for regressed or new failing cases, or budget skips (needs --baseline)
+      --cache <path>     reuse passed results whose case, skills and model did not change; updated after the run
 run/check options:
       --skill <a,b>      keep only cases that mention these skills
 check options:
@@ -127,6 +129,7 @@ const OPTIONS = {
   markdown: { type: "string" },
   baseline: { type: "string" },
   "only-new-failures": { type: "boolean", default: false },
+  cache: { type: "string" },
   top: { type: "string" },
   overlap: { type: "string" },
   strict: { type: "boolean", default: false },
@@ -173,6 +176,7 @@ interface Flags {
   markdown?: string;
   baseline?: string;
   onlyNewFailures: boolean;
+  cacheFile?: string;
   top: number;
   overlap: number;
   strict: boolean;
@@ -216,6 +220,7 @@ function parseFlags(values: Values, cwd: string): Flags {
     markdown: values.markdown,
     baseline: values.baseline,
     onlyNewFailures: values["only-new-failures"],
+    cacheFile: values.cache,
     top: intFlag(values.top, "top", 1) ?? 5,
     overlap: ratioFlag(values.overlap) ?? 0.3,
     strict: values.strict,
@@ -718,6 +723,8 @@ interface PlanItem {
   threshold: number;
   runs: (RunVerdict | undefined)[];
   done: number;
+  cached?: CaseResult;
+  fingerprint?: string;
 }
 
 interface RunOutcome {
@@ -745,6 +752,20 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
   const suite = await loadCases(file, io);
   if (!suite) return 2;
 
+  const cachePath = flags.cacheFile === undefined ? undefined : path.resolve(io.cwd, flags.cacheFile);
+  let oldCache: CacheFile | null = null;
+  if (flags.cacheFile !== undefined) {
+    try {
+      if (!fs.existsSync(cachePath as string)) {
+        io.stderr.write(`note: no cache at ${flags.cacheFile}, running every case\n`);
+      } else {
+        oldCache = parseCache(fs.readFileSync(cachePath as string, "utf8"));
+      }
+    } catch (e) {
+      io.stderr.write(`note: ignoring cache ${flags.cacheFile}: ${(e as Error).message}\n`);
+    }
+  }
+
   let baseline: SuiteReport | undefined;
   if (flags.baseline !== undefined) {
     try {
@@ -769,9 +790,22 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
   }
   const selected = applySkillFilter(byOnly, flags.skill);
 
+  const docs = flags.cacheFile === undefined ? [] : loadSkillDocs({ cwd: io.cwd, configDir: flags.configDir });
+  const context = flags.cacheFile === undefined ? "" : routingContext(docs);
+  const agentVersion = flags.cacheFile === undefined || !adapter.version ? null : await adapter.version().catch(() => null);
+  const settings = { repeat, threshold, agent, model: model ?? null, batch: flags.batch, directive, earlyStop: flags.earlyStop, agentVersion };
+  const fingerprints = new Map<number, string>();
+  for (const c of suite.cases) fingerprints.set(c.index, caseFingerprint(c, { ...settings, repeat: c.repeat ?? repeat, threshold: c.threshold ?? threshold }, context));
+  const cachedEntries = new Map((oldCache?.entries ?? []).map((entry) => [entry.fingerprint, entry]));
+
   const items: PlanItem[] = selected.map((c, i) => {
     const n = c.repeat ?? repeat;
-    return { c, jobIndex: i, threshold: c.threshold ?? threshold, runs: Array.from<RunVerdict | undefined>({ length: n }), done: 0 };
+    const fingerprint = fingerprints.get(c.index) as string;
+    const cached = cachedEntries.get(fingerprint);
+    const cachedResult = cached?.case.status === "passed" && Array.isArray(cached.case.runs)
+      ? { case: c, runs: cached.case.runs, passed: cached.case.passed, ok: true, threshold: c.threshold ?? threshold }
+      : undefined;
+    return { c, jobIndex: i, threshold: c.threshold ?? threshold, runs: Array.from<RunVerdict | undefined>({ length: n }), done: 0, cached: cachedResult, fingerprint };
   });
 
   // without --budget it only estimates the spend for the report
@@ -796,6 +830,7 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
   const skippedRunCosts = skipped.flatMap((item) => item.runs.flatMap((v) => (v ? [v.costUsd] : [])));
 
   const ordered = outcome.results.filter((r): r is CaseResult => r !== undefined);
+  const realOrdered = items.flatMap((item) => item.cached ? [] : (outcome.results[item.jobIndex] ? [outcome.results[item.jobIndex] as CaseResult] : []));
   const expected = expectedNames(selected);
   const unavailable = outcome.sawAvailability ? expected.filter((name) => !outcome.available.has(name)) : [];
   const pairs = confusion(ordered);
@@ -816,8 +851,9 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
     baseline,
     baselineFile: flags.baseline,
     suiteCases: suite.cases.map((c) => ({ id: c.id ?? null, query: c.query })),
+    cached: items.map((item) => item.cached !== undefined),
   });
-  reporter.summary(ordered, {
+  reporter.summary(realOrdered, {
     unavailable,
     confusion: pairs,
     skipped: skipped.length,
@@ -829,6 +865,7 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
       regressed: report.cases.filter((c) => c.change === "regressed").map((c) => `#${c.id ?? c.index}`),
       fixed: report.cases.filter((c) => c.change === "fixed").map((c) => `#${c.id ?? c.index}`),
     } : undefined,
+    cached: report.summary.cached,
   });
   if (flags.batch) {
     // cases that only errored have no answer to confirm
@@ -852,6 +889,16 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
   }
   if (flags.junit !== undefined) writeReportFile(flags.junit, toJunit(report), "--junit");
   if (flags.markdown !== undefined) writeReportFile(flags.markdown, toMarkdown(report), "--markdown");
+
+  if (flags.cacheFile !== undefined) {
+    const fresh: CacheEntry[] = report.cases.flatMap((c, i) => c.status === "passed" ? [{ fingerprint: items[i]?.fingerprint as string, case: c }] : []);
+    const cache = mergeCache(oldCache, fresh, new Set(fingerprints.values()), readVersion());
+    try {
+      fs.writeFileSync(cachePath as string, JSON.stringify(cache, null, 2) + "\n");
+    } catch (e) {
+      throw new UsageError(`cannot write --cache ${flags.cacheFile}: ${(e as Error).message}`);
+    }
+  }
 
   if (flags.onlyNewFailures) {
     return report.cases.some((c) => c.status === "skipped" || (c.status === "failed" && (c.change === "regressed" || c.change === "new"))) ? 1 : 0;
@@ -878,14 +925,15 @@ async function runIndividually(
   budget: Budget,
   fatal: FatalStop,
 ): Promise<RunOutcome> {
-  const totalRuns = items.reduce((n, item) => n + item.runs.length, 0);
+  const totalRuns = items.reduce((n, item) => n + (item.cached ? 0 : item.runs.length), 0);
   reporter.header(items.length, repeatLabel(items), 1, totalRuns);
+  for (const item of items) if (item.cached) reporter.caseCached(item.cached);
 
-  const jobs = items.flatMap((item, jobIndex) =>
-    item.runs.map((_, runIndex) => ({ item, runIndex, jobIndex })),
+  const jobs = items.filter((item) => !item.cached).flatMap((item) =>
+    item.runs.map((_, runIndex) => ({ item, runIndex, jobIndex: item.jobIndex })),
   );
   // keep cases in file order even though runs of different cases interleave
-  const results: (CaseResult | undefined)[] = new Array(items.length);
+  const results: (CaseResult | undefined)[] = items.map((item) => item.cached);
 
   const available = new Set<string>();
   let sawAvailability = false;
@@ -931,16 +979,18 @@ async function runBatched(
   fatal: FatalStop,
 ): Promise<RunOutcome> {
   const chunks: PlanItem[][] = [];
-  for (let i = 0; i < items.length; i += flags.batchSize) chunks.push(items.slice(i, i + flags.batchSize));
-  const rounds = Math.max(...items.map((item) => item.runs.length));
+  const live = items.filter((item) => !item.cached);
+  for (let i = 0; i < live.length; i += flags.batchSize) chunks.push(live.slice(i, i + flags.batchSize));
+  const rounds = live.length > 0 ? Math.max(...live.map((item) => item.runs.length)) : 0;
   const jobs: { chunk: PlanItem[]; round: number }[] = [];
   for (let round = 0; round < rounds; round++) {
     // a round past every repeat in the chunk makes no call
     for (const chunk of chunks) if (chunk.some((item) => round < item.runs.length)) jobs.push({ chunk, round });
   }
   reporter.batchHeader(items.length, repeatLabel(items), jobs.length);
+  for (const item of items) if (item.cached) reporter.caseCached(item.cached);
 
-  const results: (CaseResult | undefined)[] = new Array(items.length);
+  const results: (CaseResult | undefined)[] = items.map((item) => item.cached);
   await runPool(jobs, flags.jobs, async (job) => {
     // a case with a smaller repeat only takes its first rounds
     const active = job.chunk.filter((item) => job.round < item.runs.length);

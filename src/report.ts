@@ -51,6 +51,13 @@ export class Reporter {
     if (!res.ok && res.case.note) this.write(`      ${this.paint("2", `note ${label}: ${oneLine(res.case.note)}`)}\n`);
   }
 
+  caseCached(res: CaseResult): void {
+    const label = `#${res.case.id ?? res.case.index}`;
+    const loaded = [...new Set(res.runs.flatMap((r) => r.loaded))];
+    const arrow = this.paint("2", "→");
+    this.write(`${this.paint("2", "ok".padEnd(MARK_WIDTH))}${label}  ${oneLine(res.case.query)}  ${arrow} ${loaded.length > 0 ? loaded.join(", ") : this.paint("2", "—")} ${this.paint("2", "(cached)")}\n`);
+  }
+
   /** A case the budget never let start; printed after all real runs settle. */
   caseSkipped(c: Case): void {
     const label = `#${c.id ?? c.index}`;
@@ -71,6 +78,7 @@ export class Reporter {
       /** costs of runs made for cases the budget then skipped: spent all the same */
       skippedRunCosts?: (number | null)[];
       baseline?: { summary: BaselineSummary; regressed: string[]; fixed: string[] };
+      cached?: number;
     },
   ): void {
     const verdicts = results.flatMap((r) => r.runs);
@@ -97,8 +105,10 @@ export class Reporter {
     const failed = results.filter((r) => !r.ok).length;
     const skipped = extra?.skipped ?? 0;
     const skippedPart = skipped > 0 ? `, ${skipped} skipped` : "";
+    const cachedPart = (extra?.cached ?? 0) > 0 ? `, ${extra?.cached} cached` : "";
     const costs = [...verdicts.map((v) => v.costUsd), ...(extra?.skippedRunCosts ?? [])];
-    this.write(`${failed} failed${skippedPart} of ${results.length + skipped} · runs ${costs.length} · ${costLine(costs, extra?.estimatedUsd)}\n`);
+    const cost = costs.length === 0 && (extra?.cached ?? 0) > 0 ? "cost $0.00" : costLine(costs, extra?.estimatedUsd);
+    this.write(`${failed} failed${skippedPart} of ${results.length + skipped + (extra?.cached ?? 0)} · runs ${costs.length} · ${cost}${cachedPart}\n`);
     if (extra?.baseline) {
       const b = extra.baseline;
       const parts = [

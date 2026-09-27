@@ -28,6 +28,7 @@ interface Over {
   estimatedCostUsd?: number;
   budgetUsd?: number | null;
   budgetReached?: boolean;
+  cached?: boolean[];
   unavailable?: string[];
   confusion?: ConfusionPair[];
   durationMs?: number;
@@ -38,11 +39,12 @@ function makeReport(cases: ReportCase[], over: Over = {}): string {
   const {
     model = "sonnet", batch = false, estimatedCostUsd = 0, baseline = null,
     budgetUsd = null, budgetReached = false, unavailable = [], confusion = [], durationMs = 12_345,
+    cached = undefined,
   } = over;
   return toMarkdown(buildReport({
     file: "skillcheck.yaml", agent: "claude", model, batch,
     startedAtMs: Date.parse("2026-09-27T10:00:00Z"), durationMs,
-    cases, unavailable, confusion, estimatedCostUsd, budgetUsd, budgetReached, baseline,
+    cases, unavailable, confusion, estimatedCostUsd, budgetUsd, budgetReached, baseline, cached,
   }));
 }
 
@@ -79,6 +81,11 @@ describe("toMarkdown", () => {
     expect(md).not.toContain("Reason |");
     expect(md).not.toContain("❌");
     expect(md.endsWith("</details>\n")).toBe(true);
+  });
+
+  it("shows cached cases in the header", () => {
+    const md = makeReport([done(c1, [verdict(c1, { loaded: ["find-bug"] })])], { cached: [true] });
+    expect(md).toContain("### ✅ skillcheck: 1 passed, 1 cached");
   });
 
   it("renders baseline counts and change labels", () => {
