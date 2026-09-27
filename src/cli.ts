@@ -594,8 +594,8 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
   const startedAtMs = Date.now();
   const fatal = new FatalStop();
   const outcome = flags.batch
-    ? await runBatched(adapter.runBatch!.bind(adapter), items, flags, model, repeat, reporter, budget, fatal)
-    : await runIndividually(adapter, items, flags, model, directive, repeat, reporter, budget, fatal);
+    ? await runBatched(adapter.runBatch!.bind(adapter), items, flags, model, reporter, budget, fatal)
+    : await runIndividually(adapter, items, flags, model, directive, reporter, budget, fatal);
   if (fatal.message !== null) {
     // an environment problem, not a routing result: no summary, no reports
     io.stderr.write(`skillcheck: stopped, the agent cannot run: ${fatal.message}\n`);
@@ -606,6 +606,7 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
   const skipped = items.filter((item) => outcome.results[item.jobIndex] === undefined);
   for (const item of skipped) reporter.caseSkipped(item.c);
   const notStartedRuns = skipped.reduce((n, item) => n + item.runs.length - item.done, 0);
+  const skippedRunCosts = skipped.flatMap((item) => item.runs.flatMap((v) => (v ? [v.costUsd] : [])));
 
   const ordered = outcome.results.filter((r): r is CaseResult => r !== undefined);
   const expected = expectedNames(selected);
@@ -617,6 +618,7 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
     skipped: skipped.length,
     budget: skipped.length > 0 ? { limitUsd: flags.budget!, spent: budget.spent, notStartedRuns } : undefined,
     estimatedUsd: budget.spent,
+    skippedRunCosts,
   });
   if (flags.batch) {
     // cases that only errored have no answer to confirm
@@ -638,6 +640,7 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
     confusion: pairs,
     batch: flags.batch,
     estimatedCostUsd: budget.spent,
+    skippedRunCosts,
     budgetUsd: flags.budget ?? null,
     budgetReached: skipped.length > 0,
   });
@@ -667,13 +670,12 @@ async function runIndividually(
   flags: Flags,
   model: string | undefined,
   directive: string,
-  repeat: number,
   reporter: Reporter,
   budget: Budget,
   fatal: FatalStop,
 ): Promise<RunOutcome> {
   const totalRuns = items.reduce((n, item) => n + item.runs.length, 0);
-  reporter.header(items.length, repeat, 1, totalRuns);
+  reporter.header(items.length, repeatLabel(items), 1, totalRuns);
 
   const jobs = items.flatMap((item, jobIndex) =>
     item.runs.map((_, runIndex) => ({ item, runIndex, jobIndex })),
@@ -720,7 +722,6 @@ async function runBatched(
   items: PlanItem[],
   flags: Flags,
   model: string | undefined,
-  repeat: number,
   reporter: Reporter,
   budget: Budget,
   fatal: FatalStop,
@@ -730,9 +731,10 @@ async function runBatched(
   const rounds = Math.max(...items.map((item) => item.runs.length));
   const jobs: { chunk: PlanItem[]; round: number }[] = [];
   for (let round = 0; round < rounds; round++) {
-    for (const chunk of chunks) jobs.push({ chunk, round });
+    // a round past every repeat in the chunk makes no call
+    for (const chunk of chunks) if (chunk.some((item) => round < item.runs.length)) jobs.push({ chunk, round });
   }
-  reporter.batchHeader(items.length, repeat, chunks.length * rounds);
+  reporter.batchHeader(items.length, repeatLabel(items), jobs.length);
 
   const results: (CaseResult | undefined)[] = new Array(items.length);
   await runPool(jobs, flags.jobs, async (job) => {
@@ -744,6 +746,8 @@ async function runBatched(
     const parsed = parseBatchAnswer(br.structured, br.text);
     const chunkError = br.error ?? parsed.error; // a chunk error is every case's error
     fatal.note(br.error);
+    // one call, one budget entry: its usage prices it when the cost never came
+    budget.add(br.costUsd, br.usage ?? null);
     active.forEach((item, i) => {
       const answer = parsed.answers.get(i + 1);
       const r: RunResult = {
@@ -756,7 +760,6 @@ async function runBatched(
         durationMs: br.durationMs,
       };
       const verdict = judge(item.c, r);
-      budget.add(verdict.costUsd);
       item.runs[job.round] = verdict;
       item.done++;
       if (item.done === item.runs.length) {
@@ -768,6 +771,14 @@ async function runBatched(
   }, { shouldStart: () => fatal.canStart(budget) });
 
   return { results, available: new Set<string>(), sawAvailability: false };
+}
+
+/** "3", or "1–3" when cases override the repeat. */
+function repeatLabel(items: PlanItem[]): string {
+  const counts = items.map((item) => item.runs.length);
+  const min = Math.min(...counts);
+  const max = Math.max(...counts);
+  return min === max ? String(min) : `${min}–${max}`;
 }
 
 function selectCases(suite: Suite, agent: string, only?: string): Case[] {

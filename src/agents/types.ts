@@ -50,6 +50,8 @@ export interface BatchResult {
   /** answer text */
   text: string;
   costUsd: number | null;
+  /** tokens used, to price a call killed before it reported its cost */
+  usage?: TokenUsage | null;
   error: string | null;
   durationMs: number;
 }

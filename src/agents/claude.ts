@@ -352,7 +352,8 @@ export class ClaudeAdapter implements AgentAdapter {
         },
       });
       const { text, costUsd, structuredOutput } = out.stream.result;
-      return { structured: structuredOutput, text, costUsd, error: withLoginHint(out.error, opts.configDir), durationMs: out.durationMs };
+      const error = withLoginHint(out.error, opts.configDir);
+      return { structured: structuredOutput, text, costUsd, usage: out.stream.usage, error, durationMs: out.durationMs };
     } finally {
       await rm(workdir, { recursive: true, force: true });
     }
@@ -440,12 +441,14 @@ export class ClaudeAdapter implements AgentAdapter {
         if (child?.pid) active.delete(child.pid);
         if (killTimer) clearTimeout(killTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
-        // A non-zero exit is not a failure by itself: error_max_turns is normal.
-        // Only a stdout with nothing in it means the run really did not happen.
+        // A non-zero exit is not a failure by itself: error_max_turns is normal
+        // and ends with a result event. Without one, the run ended before routing
+        // was over, unless we stopped it ourselves.
         if (!error) error = stream.error;
-        if (!error && !stdoutSeen) {
+        if (!error && !stopping && !stream.finished) {
           const detail = stderrText.trim().slice(0, 120);
-          error = `claude exited with code ${code ?? signal}${detail ? `: ${detail}` : ""}`;
+          const why = stdoutSeen ? `claude exited with code ${code ?? signal} before its result` : `claude exited with code ${code ?? signal}`;
+          error = `${why}${detail ? `: ${detail}` : ""}`;
         }
         resolve({ stream, error, stoppedEarly, durationMs: Date.now() - startedAt });
       };

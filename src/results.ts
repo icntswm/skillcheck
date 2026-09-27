@@ -18,6 +18,7 @@ export interface SuiteReport {
     cases: number;
     failed: number;
     skipped: number;
+    /** runs made, including those of cases the budget then skipped */
     runs: number;
     costUsd: number;
     unknownCostRuns: number;
@@ -72,6 +73,8 @@ export interface ReportInput {
   confusion: ConfusionPair[];
   /** known costs plus runs priced from their tokens */
   estimatedCostUsd: number;
+  /** costs of runs made for cases the budget then skipped; counted in runs and costUsd */
+  skippedRunCosts?: (number | null)[];
   budgetUsd: number | null;
   budgetReached: boolean;
 }
@@ -79,7 +82,7 @@ export interface ReportInput {
 /** The single source of truth for --json and --junit; computed once per run. */
 export function buildReport(input: ReportInput): SuiteReport {
   const verdicts = input.cases.flatMap((e) => e.result?.runs ?? []);
-  const costs = verdicts.map((v) => v.costUsd);
+  const costs = [...verdicts.map((v) => v.costUsd), ...(input.skippedRunCosts ?? [])];
   const known = costs.filter((c): c is number => c !== null);
   return {
     tool: "skillcheck",
@@ -94,7 +97,7 @@ export function buildReport(input: ReportInput): SuiteReport {
       cases: input.cases.length,
       failed: input.cases.filter((e) => e.result && !e.result.ok).length,
       skipped: input.cases.filter((e) => !e.result).length,
-      runs: verdicts.length,
+      runs: costs.length,
       costUsd: known.reduce((a, b) => a + b, 0),
       unknownCostRuns: costs.length - known.length,
       estimatedCostUsd: input.estimatedCostUsd,

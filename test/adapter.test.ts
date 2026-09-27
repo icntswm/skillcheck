@@ -121,6 +121,14 @@ describe("ClaudeAdapter", () => {
     expect(r.costUsd).toBeNull();
   });
 
+  it("reports an exit before the result event as an error even after stdout", async () => {
+    process.env.FAKE_FIXTURE = path.join(fixtures, "synthetic-init.jsonl");
+    process.env.FAKE_EXIT = "1";
+    process.env.FAKE_STDERR = "crashed\n";
+    const r = await new ClaudeAdapter().run(opts({ earlyStop: false }));
+    expect(r.error).toBe("claude exited with code 1 before its result: crashed");
+  });
+
   it("reports a missing binary", async () => {
     process.env.SKILLCHECK_CLAUDE_BIN = path.join(tmp, "no-such-claude");
     const r = await new ClaudeAdapter().run(opts());

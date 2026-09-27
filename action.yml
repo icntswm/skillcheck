@@ -40,7 +40,7 @@ inputs:
     description: Path for the JUnit XML report. Empty disables it.
     default: skillcheck.xml
   args:
-    description: Extra arguments for skillcheck run.
+    description: Extra arguments for skillcheck run, split on whitespace (quotes are not parsed).
     default: ""
   comment:
     description: >

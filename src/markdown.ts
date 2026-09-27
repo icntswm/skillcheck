@@ -98,13 +98,14 @@ function failMark(c: CaseReport): "⚠️" | "❌" {
 }
 
 /** The first non-ok run's reason, the pass share prefixed over several runs,
- * a diagnosis appended in italics. */
+ * a diagnosis appended in italics, then the case note. */
 function reasonCell(c: CaseReport): string {
   const bad = c.runs.filter((r) => !r.ok);
   const parts = c.runs.length > 1 ? [`${c.passed}/${c.runs.length}`, bad[0]?.reason ?? ""] : [bad[0]?.reason ?? ""];
   let text = parts.join(" · ");
   const diagnosis = bad.find((r) => r.diagnosis !== null)?.diagnosis;
   if (diagnosis) text += ` — _${diagnosis}_`;
+  if (c.note !== null) text += ` · note: ${c.note}`;
   return text;
 }
 

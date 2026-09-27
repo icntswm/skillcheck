@@ -164,7 +164,7 @@ describe("cli run", () => {
     };
     const code = await main(["run", file], { stdout: out, stderr: out, cwd: tmp }, { adapter });
     expect(code).toBe(0);
-    expect(out.text).toContain("1 cases × 1 repeat × 1 agent = 3 runs");
+    expect(out.text).toContain("1 cases × 3 repeat × 1 agent = 3 runs");
     expect(out.text).toContain("2/3");
   });
 
@@ -320,6 +320,19 @@ describe("cli run --batch", () => {
   }
   const allQ = Object.fromEntries(Array.from({ length: 5 }, (_, i) => [`q${i + 1}`, ["find-bug"]]));
 
+  it("prices a call killed before its cost from its tokens, once per call", async () => {
+    const file = writeCases("cases.json", suiteN(4));
+    const calls: BatchOptions[] = [];
+    const usage = { model: "claude-sonnet-5", input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 25_000 }; // ~$0.15
+    const adapter = batchAdapter(allQ, calls, { costUsd: null, usage, error: "timeout after 180s" });
+    const out = new Sink();
+    const code = await main(["run", file, "--batch", "--batch-size", "2", "-j", "1", "--budget", "0.1"],
+      { stdout: out, stderr: out, cwd: tmp }, { adapter });
+    expect(code).toBe(1);
+    expect(calls).toHaveLength(1);
+    expect(out.text).toContain("budget $0.10 reached (spent ~$0.15), 2 runs not started");
+  });
+
   it("splits cases into chunks: 5 cases at size 2 is 3 calls", async () => {
     const file = writeCases("cases.json", suiteN(5));
     const out = new Sink();
@@ -437,7 +450,35 @@ describe("cli run --batch", () => {
     expect(calls).toHaveLength(3); // rounds = max repeat
     expect(calls[1]?.prompt).toContain('"q1"');
     expect(calls[1]?.prompt).not.toContain('"q2"'); // q2 was done after round 1
-    expect(out.text).toContain("2 cases × 1 repeat, batch mode = 3 calls");
+    expect(out.text).toContain("2 cases × 1–3 repeat, batch mode = 3 calls");
+  });
+
+  it("counts only the calls that have cases left in their round", async () => {
+    const file = writeCases("cases.json", { cases: [
+      { query: "q1", expect: ["find-bug"], repeat: 3 },
+      { query: "q2", expect: ["find-bug"] },
+    ] });
+    const calls: BatchOptions[] = [];
+    const out = new Sink();
+    const code = await main(["run", file, "--batch", "--batch-size", "1"], { stdout: out, stderr: out, cwd: tmp },
+      { adapter: batchAdapter(allQ, calls) });
+    expect(code).toBe(0);
+    expect(calls).toHaveLength(4); // q1 three times, q2 once
+    expect(out.text).toContain("2 cases × 1–3 repeat, batch mode = 4 calls");
+  });
+
+  it("shows the case note under a failure", async () => {
+    const file = writeCases("cases.json", { cases: [
+      { query: "q1", expect: ["find-bug"], note: "check the migration" },
+      { query: "q2", expect: ["find-bug"], note: "not shown on a pass" },
+    ] });
+    const out = new Sink();
+    const md = path.join(tmp, "r.md");
+    await main(["run", file, "--batch", "--markdown", md], { stdout: out, stderr: out, cwd: tmp },
+      { adapter: batchAdapter({ q2: ["find-bug"] }) });
+    expect(out.text).toContain("      note #1: check the migration\n");
+    expect(out.text).not.toContain("not shown on a pass");
+    expect(readFileSync(md, "utf8")).toContain("· note: check the migration |");
   });
 
   it("the named-but-not-invoked diagnosis must not fire (text is empty)", async () => {
@@ -569,13 +610,21 @@ describe("cli --budget", () => {
     const calls: RunOptions[] = [];
     const adapter = fakeAdapter({ "why does it fail": { loaded: ["find-bug"] }, "also fails": { loaded: ["find-bug"] } }, calls);
     const out = new Sink();
-    const code = await main(["run", file, "-j", "1", "--budget", "0.1"], { stdout: out, stderr: out, cwd: tmp }, { adapter });
+    const json = path.join(tmp, "r.json");
+    const md = path.join(tmp, "r.md");
+    const code = await main(["run", file, "-j", "1", "--budget", "0.1", "--json", json, "--markdown", md],
+      { stdout: out, stderr: out, cwd: tmp }, { adapter });
     expect(code).toBe(1);
     expect(calls).toHaveLength(2); // 2 × $0.05 fills the budget
     expect(out.text).toContain("skip  #1  why does it fail  → budget reached");
     expect(out.text).toContain("skip  #2  also fails  → budget reached");
     expect(out.text).not.toContain("ok    #1");
-    expect(out.text).toContain("0 failed, 2 skipped of 2 · runs 0 · cost ?");
+    // the runs of skipped cases were paid for, so the totals keep them
+    expect(out.text).toContain("0 failed, 2 skipped of 2 · runs 2 · cost $0.10");
+    const summary = JSON.parse(readFileSync(json, "utf8")).summary;
+    expect(summary.runs).toBe(2);
+    expect(summary.costUsd).toBeCloseTo(0.1, 10);
+    expect(readFileSync(md, "utf8")).toContain("2 runs · cost $0.10");
     expect(out.text).toContain("budget $0.10 reached (spent ~$0.10), 2 runs not started");
   });
 

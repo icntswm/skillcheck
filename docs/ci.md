@@ -88,7 +88,7 @@ jobs:
 | `model`, `repeat`, `threshold` | suite values | overrides |
 | `budget` | `5` | spending cap in USD |
 | `junit` | `skillcheck.xml` | JUnit report path, empty disables it |
-| `args` | | extra arguments for `skillcheck run` |
+| `args` | | extra arguments for `skillcheck run`, split on whitespace: quotes are not parsed, so a path with spaces does not fit |
 | `comment` | `true` | post the report as a pull request comment |
 | `github-token` | `github.token` | token for that comment |
 | `version` | `latest` | skillcheck version to install |

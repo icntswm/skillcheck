@@ -17,13 +17,13 @@ export class Reporter {
     this.useColor = out.isTTY === true && !process.env.NO_COLOR;
   }
 
-  header(nCases: number, repeat: number, nAgents: number, totalRuns?: number): void {
-    const runs = totalRuns ?? nCases * repeat * nAgents;
+  header(nCases: number, repeat: number | string, nAgents: number, totalRuns?: number): void {
+    const runs = totalRuns ?? nCases * Number(repeat) * nAgents;
     const agents = nAgents === 1 ? "agent" : "agents";
     this.write(`${nCases} cases × ${repeat} repeat × ${nAgents} ${agents} = ${runs} runs\n`);
   }
 
-  batchHeader(nCases: number, repeat: number, calls: number): void {
+  batchHeader(nCases: number, repeat: number | string, calls: number): void {
     this.write(`${nCases} cases × ${repeat} repeat, batch mode = ${calls} call${calls === 1 ? "" : "s"}\n`);
   }
 
@@ -47,6 +47,7 @@ export class Reporter {
     if (diagnosed?.diagnosis) {
       this.write(`      ${this.paint("33", `diagnosis ${label}: ${diagnosed.diagnosis}`)}\n`);
     }
+    if (!res.ok && res.case.note) this.write(`      ${this.paint("2", `note ${label}: ${oneLine(res.case.note)}`)}\n`);
   }
 
   /** A case the budget never let start; printed after all real runs settle. */
@@ -66,6 +67,8 @@ export class Reporter {
       budget?: { limitUsd: number; spent: number; notStartedRuns: number };
       /** spend with runs that reported no cost estimated from tokens */
       estimatedUsd?: number;
+      /** costs of runs made for cases the budget then skipped: spent all the same */
+      skippedRunCosts?: (number | null)[];
     },
   ): void {
     const verdicts = results.flatMap((r) => r.runs);
@@ -92,7 +95,8 @@ export class Reporter {
     const failed = results.filter((r) => !r.ok).length;
     const skipped = extra?.skipped ?? 0;
     const skippedPart = skipped > 0 ? `, ${skipped} skipped` : "";
-    this.write(`${failed} failed${skippedPart} of ${results.length + skipped} · runs ${verdicts.length} · ${costLine(verdicts.map((v) => v.costUsd), extra?.estimatedUsd)}\n`);
+    const costs = [...verdicts.map((v) => v.costUsd), ...(extra?.skippedRunCosts ?? [])];
+    this.write(`${failed} failed${skippedPart} of ${results.length + skipped} · runs ${costs.length} · ${costLine(costs, extra?.estimatedUsd)}\n`);
   }
 
   private paint(code: string, text: string): string {
