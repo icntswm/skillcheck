@@ -20,8 +20,9 @@ function listInputPrice(model: string | null): number {
 }
 
 /**
- * Running spend estimate for --budget. Runs killed by early-stop never report
- * a cost, so they are priced from their token usage: at the rate seen in
+ * Running spend estimate for --budget. claude usually reports its cost even
+ * when early-stop kills it, but a run killed before the result event does
+ * not; such runs are priced from their token usage: at the rate seen in
  * finished runs, or at list price before any run finishes. Runs with neither
  * cost nor usage count at the average known cost.
  */

@@ -25,11 +25,11 @@ function done(c: Case, runs: RunVerdict[]): ReportCase {
   return { c, threshold: 1, result: aggregate(c, runs, 1) };
 }
 
-function makeReport(cases: ReportCase[], model: string | null = "sonnet"): string {
+function makeReport(cases: ReportCase[], model: string | null = "sonnet", estimatedCostUsd = 0): string {
   return toJunit(buildReport({
     file: "skillcheck.yaml", agent: "claude", model,
     startedAtMs: Date.parse("2026-09-27T10:00:00Z"), durationMs: 12345,
-    cases, unavailable: [], confusion: [], estimatedCostUsd: 0, budgetUsd: null, budgetReached: false,
+    cases, unavailable: [], confusion: [], estimatedCostUsd, budgetUsd: null, budgetReached: false,
   }));
 }
 
@@ -63,15 +63,17 @@ describe("toJunit", () => {
     expect(xml).toContain("<testcase name=\"#stability multi line query\" classname=\"skillcheck.claude\" time=\"2\">");
     expect(xml.endsWith("</testsuite>\n</testsuites>\n")).toBe(true);
     expect(xml).not.toContain("unknownCostRuns");
+    expect(xml).not.toContain("estimatedCostUsd");
   });
 
   it("marks runs without a reported cost next to costUsd", () => {
     const xml = makeReport([
       done(c1, [verdict(c1, { loaded: ["find-bug"], costUsd: null })]),
       done(c3, [verdict(c3, { loaded: ["find-bug"] })]),
-    ]);
+    ], "sonnet", 0.03);
     expect(xml).toContain("<property name=\"costUsd\" value=\"0.01\"/>");
     expect(xml).toContain("<property name=\"unknownCostRuns\" value=\"1\"/>");
+    expect(xml).toContain("<property name=\"estimatedCostUsd\" value=\"0.03\"/>");
   });
 
   it("a failed case becomes a routing failure with the per-run body", () => {

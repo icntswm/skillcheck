@@ -17,9 +17,10 @@ export function toJunit(report: SuiteReport): string {
   const properties = ["    <properties>", `      <property name="agent" value="${esc(report.agent)}"/>`];
   if (report.model !== null) properties.push(`      <property name="model" value="${esc(report.model)}"/>`);
   properties.push(`      <property name="costUsd" value="${report.summary.costUsd.toFixed(2)}"/>`);
-  // early-stopped runs report no cost, so costUsd alone understates the spend
+  // a run killed before its result event reports no cost, so costUsd alone understates the spend
   if (report.summary.unknownCostRuns > 0) {
     properties.push(`      <property name="unknownCostRuns" value="${report.summary.unknownCostRuns}"/>`);
+    properties.push(`      <property name="estimatedCostUsd" value="${report.summary.estimatedCostUsd.toFixed(2)}"/>`);
   }
   properties.push("    </properties>");
 
