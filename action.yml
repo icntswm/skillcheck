@@ -1,0 +1,105 @@
+name: skillcheck
+description: Regression tests for Claude Code skills. Checks that every request still loads the right skill.
+branding:
+  icon: check-circle
+  color: orange
+
+# Auth: pass ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in the step's env:.
+inputs:
+  file:
+    description: Cases file.
+    default: skillcheck.yaml
+  skills-dir:
+    description: >
+      Directory with the skills under test. They are copied into an isolated
+      Claude Code config dir, so the run sees only them. Empty uses the
+      runner's own config.
+    default: skills
+  lint:
+    description: Run the free lint step first.
+    default: "true"
+  run:
+    description: Run the cases against the model (costs model calls).
+    default: "true"
+  batch:
+    description: One model call per 25 cases instead of one per case.
+    default: "false"
+  model:
+    description: Model passed to Claude Code. Empty uses the suite's model.
+    default: ""
+  repeat:
+    description: Runs per case. Empty uses the suite's value.
+    default: ""
+  threshold:
+    description: Share of runs a case must pass. Empty uses the suite's value.
+    default: ""
+  budget:
+    description: Stop starting new runs once the spend estimate reaches this many USD.
+    default: "5"
+  junit:
+    description: Path for the JUnit XML report. Empty disables it.
+    default: skillcheck.xml
+  args:
+    description: Extra arguments for skillcheck run.
+    default: ""
+  version:
+    description: "@icntswm/skillcheck version to install."
+    default: latest
+  claude-code-version:
+    description: "@anthropic-ai/claude-code version to install."
+    default: latest
+
+runs:
+  using: composite
+  steps:
+    - name: install
+      shell: bash
+      env:
+        SC_VERSION: ${{ inputs.version }}
+        CC_VERSION: ${{ inputs.claude-code-version }}
+      run: npm install -g "@anthropic-ai/claude-code@$CC_VERSION" "@icntswm/skillcheck@$SC_VERSION"
+
+    - name: config dir
+      if: inputs.skills-dir != ''
+      shell: bash
+      env:
+        SKILLS_DIR: ${{ inputs.skills-dir }}
+      run: |
+        dir="$RUNNER_TEMP/skillcheck-config"
+        mkdir -p "$dir/skills"
+        cp -R "$SKILLS_DIR/." "$dir/skills/"
+        echo "SKILLCHECK_CONFIG_DIR=$dir" >> "$GITHUB_ENV"
+
+    - name: lint
+      if: inputs.lint == 'true'
+      shell: bash
+      env:
+        FILE: ${{ inputs.file }}
+      run: |
+        args=(lint "$FILE")
+        [ -n "$SKILLCHECK_CONFIG_DIR" ] && args+=(--config-dir "$SKILLCHECK_CONFIG_DIR")
+        skillcheck "${args[@]}"
+
+    - name: run
+      if: inputs.run == 'true'
+      shell: bash
+      env:
+        FILE: ${{ inputs.file }}
+        BATCH: ${{ inputs.batch }}
+        MODEL: ${{ inputs.model }}
+        REPEAT: ${{ inputs.repeat }}
+        THRESHOLD: ${{ inputs.threshold }}
+        BUDGET: ${{ inputs.budget }}
+        JUNIT: ${{ inputs.junit }}
+        EXTRA: ${{ inputs.args }}
+      run: |
+        args=(run "$FILE")
+        [ -n "$SKILLCHECK_CONFIG_DIR" ] && args+=(--config-dir "$SKILLCHECK_CONFIG_DIR")
+        [ "$BATCH" = "true" ] && args+=(--batch)
+        [ -n "$MODEL" ] && args+=(--model "$MODEL")
+        [ -n "$REPEAT" ] && args+=(--repeat "$REPEAT")
+        [ -n "$THRESHOLD" ] && args+=(--threshold "$THRESHOLD")
+        [ -n "$BUDGET" ] && args+=(--budget "$BUDGET")
+        [ -n "$JUNIT" ] && args+=(--junit "$JUNIT")
+        read -ra extra <<< "$EXTRA"
+        skillcheck "${args[@]}" "${extra[@]}"

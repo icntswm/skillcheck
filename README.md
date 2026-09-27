@@ -12,22 +12,12 @@ some of your requests load the wrong skill. Nothing warns you: the agent still
 answers, just with the wrong instructions. skillcheck catches this before your
 users do.
 
-```
-$ skillcheck run examples/demo/skillcheck.yaml --skill test-guard,find-bug
-5 cases × 1 repeat × 1 agent = 5 runs
-ok    #bug-500  POST /orders returns 500 with 'nil pointer deref…  → find-bug
-FAIL  #flaky-ci-only  this test is red in CI roughly once a day but I …  → find-bug · not loaded test-guard
-FAIL  #flaky-retry  TestCartMerge fails sometimes and goes green w…  → find-bug · not loaded test-guard; forbidden find-bug
-ok    #bug-consistent  TestCheckoutTotal fails on every run since this …  → find-bug
-ok    #perf-latency  the /search endpoint went from 80ms to 900ms aft…  → perf-profile
+![skillcheck catching a routing regression](docs/assets/demo.gif)
 
-confusion:
-  expected test-guard → got find-bug (2)
-2 failed of 5 · runs 5 · cost $0.25
-```
-
-This is a real run from the [demo](examples/demo): one skill's description got
-wider, and it started taking requests that belong to its neighbour.
+A real run on the [demo](examples/demo): one skill's description got wider,
+and it started taking requests that belong to its neighbour. The free `lint`
+flags a suspicious description, and one batch call finds the two misrouted
+requests.
 
 ## What you get
 
@@ -46,8 +36,9 @@ wider, and it started taking requests that belong to its neighbour.
   from a broken one instead of letting you guess.
 - 🏷️ **Catches renames and typos.** Case names are checked against the skills
   the agent really has, so a renamed skill can't pass silently.
-- ⚙️ **CI-ready.** JUnit and JSON reports, clear exit codes, a spending cap
-  (`--budget`), and `--config-dir` to test only the skills in your repository.
+- ⚙️ **CI-ready.** A GitHub Action (`uses: icntswm/skillcheck@v0`), JUnit
+  and JSON reports, clear exit codes, a spending cap (`--budget`), and
+  `--config-dir` to test only the skills in your repository.
 - 📄 **Plain YAML, one dependency.** Cases are readable by anyone on the team
   and live next to the skills they test.
 
@@ -86,7 +77,7 @@ Start at the cheapest level and go up only when it finds nothing.
 | `skillcheck run --batch` | one per 25 cases | which skill the model *says* it would load |
 | `skillcheck run` | one per case | which skill the model *actually* loads |
 
-On the demo suite one batch call covered all 12 cases for $0.05 and agreed
+On the demo suite one batch call covered all 12 cases for $0.05–0.10 and agreed
 with the normal run in 34 checks out of 34. More in [docs/cost.md](docs/cost.md).
 
 ## Does it really catch regressions?

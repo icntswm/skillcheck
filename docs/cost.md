@@ -13,7 +13,7 @@ All with sonnet.
 | What | Cost |
 |---|---|
 | `lint`, `check`, `list`, `init` | free |
-| one batch call, demo suite (6 skills, 12 cases) | $0.05 |
+| one batch call, demo suite (6 skills, 12 cases) | $0.05–0.10 |
 | one batch call, about 80 skills installed | $0.14 |
 | one normal run, demo suite | about $0.05 per case |
 

@@ -50,7 +50,46 @@ A fresh config directory is not logged in. Set `ANTHROPIC_API_KEY`, or
 
 ## GitHub Actions
 
-[examples/github-actions.yml](../examples/github-actions.yml) runs on pull
+The shortest way is the skillcheck action. It installs Claude Code and
+skillcheck, copies `skills/` into an isolated config dir, runs `lint` and then
+`run`:
+
+```yaml
+on:
+  pull_request:
+    paths: [skills/**, skillcheck.yaml]
+
+jobs:
+  skillcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: icntswm/skillcheck@v0
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          model: sonnet
+          budget: 2
+```
+
+| Input | Default | Meaning |
+|---|---|---|
+| `file` | `skillcheck.yaml` | cases file |
+| `skills-dir` | `skills` | skills under test; empty uses the runner's config |
+| `lint` | `true` | run the free lint first |
+| `run` | `true` | run the cases against the model |
+| `batch` | `false` | one call per 25 cases |
+| `model`, `repeat`, `threshold` | suite values | overrides |
+| `budget` | `5` | spending cap in USD |
+| `junit` | `skillcheck.xml` | JUnit report path, empty disables it |
+| `args` | | extra arguments for `skillcheck run` |
+| `version` | `latest` | skillcheck version to install |
+
+To see the report in the pull request, upload `skillcheck.xml` with
+`actions/upload-artifact` or feed it to a JUnit reporter action, with
+`if: always()` so it runs when cases fail.
+
+Without the action, [examples/github-actions.yml](../examples/github-actions.yml) runs on pull
 requests that touch `skills/` or the suite: `lint` first (free), then `run`
 with three repeats, a $5 budget and the JUnit report uploaded as an artifact.
 
