@@ -38,9 +38,9 @@ requests.
   the agent really has, so a renamed skill can't pass silently.
 - ⚙️ **CI-ready.** A GitHub Action (`uses: icntswm/skillcheck@v1`) that
   comments the report on the pull request, JUnit, JSON and Markdown reports,
-  clear exit codes, a spending cap (`--budget`), `--baseline` to compare with
-  `main` and fail only on new failures, and `--config-dir` to test only the
-  skills in your repository.
+  clear exit codes, a spending cap (`--budget`), `--baseline` with
+  `--only-new-failures` to compare with `main` and fail only on new failures,
+  and `--config-dir` to test only the skills in your repository.
 - 📄 **Plain YAML, one dependency.** Cases are readable by anyone on the team
   and live next to the skills they test.
 

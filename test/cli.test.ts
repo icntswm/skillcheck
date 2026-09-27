@@ -1334,6 +1334,23 @@ describe("cli gen", () => {
     expect(conflict.text).toContain("--plugin and --skill do not go together");
   });
 
+  it("counts first as coverage and drops queries repeated across groups", async () => {
+    const config = emptyConfig();
+    const names = Array.from({ length: 10 }, (_, i) => `skill-${i + 1}`);
+    seedSkills(names);
+    const file = writeCases("first.yaml", "agent: claude\ncases:\n  - query: old\n    first: skill-1\n");
+    const calls: BatchOptions[] = [];
+    const out = new Sink();
+    const adapter = genAdapter(calls, () => ({
+      structured: { cases: [{ query: "same", skill: "skill-2", avoid: null }] }, costUsd: 0.01,
+    }));
+    expect(await main(["gen", "--config-dir", config, "--append", file, "-j", "1"],
+      { stdout: out, stderr: out, cwd: tmp }, { adapter })).toBe(0);
+    expect(calls).toHaveLength(2);
+    expect(calls.some((call) => call.prompt.includes("For skill-1:"))).toBe(false);
+    expect(readFileSync(file, "utf8").match(/query: same/g)).toHaveLength(1);
+  });
+
   it("appends uncovered YAML skills, keeps comments, and checks the result", async () => {
     const config = emptyConfig();
     seedSkills(["alpha", "beta"]);

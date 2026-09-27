@@ -535,7 +535,7 @@ async function genCommand(flags: Flags, io: Io, deps: { adapter?: AgentAdapter }
     targets = pluginDocs.filter((doc) => doc.kind === "skill");
     if (targets.length === 0) throw new UsageError(`plugin ${flags.plugin} has no skills`);
   } else if (append !== null && existing !== null) {
-    const covered = new Set(existing.cases.flatMap((item) => [...item.expect, ...item.expect_any, ...item.forbid]));
+    const covered = new Set(existing.cases.flatMap((item) => [...item.expect, ...item.expect_any, ...item.forbid, ...(item.first ? [item.first] : [])]));
     targets = docs.filter((doc) => doc.kind === "skill" && doc.plugin === null && !covered.has(doc.name));
     if (targets.length === 0) {
       io.stderr.write(`nothing to draft: every skill already has cases in ${flags.append} (pass --skill to draft more)\n`);
@@ -578,7 +578,14 @@ async function genCommand(flags: Flags, io: Io, deps: { adapter?: AgentAdapter }
   });
   const successful = results.filter((result): result is NonNullable<typeof result> => result !== undefined && !result.failed);
   if (successful.length === 0) return 2;
-  const cases = successful.flatMap((result) => result.cases);
+  // each answer is deduplicated on its own; groups can still repeat each other
+  const seen = new Set<string>();
+  const cases = successful.flatMap((result) => result.cases).filter((item) => {
+    const key = item.query.trim();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   const dropped = successful.reduce((total, result) => total + result.dropped, 0);
   if (dropped > 0) io.stderr.write(`note: dropped ${dropped} proposed cases naming unknown skills\n`);
   const cost = genCost(results.map((result) => result?.costUsd ?? null));
