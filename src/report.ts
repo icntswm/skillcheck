@@ -1,7 +1,7 @@
 import type { Case } from "./cases.js";
 import type { ConfusionPair } from "./confusion.js";
 import type { CaseResult } from "./judge.js";
-import { DIAGNOSIS, DIAGNOSIS_LIMIT } from "./judge.js";
+import { DIAGNOSIS_LIMIT } from "./judge.js";
 
 export type ReportStream = NodeJS.WritableStream & { isTTY?: boolean };
 

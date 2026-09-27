@@ -452,7 +452,7 @@ describe("cli run --batch", () => {
       return [code, out.text];
     };
     const [c1, t1] = await run(["--batch-size", "2"]);
-    expect(t1).toContain("--batch-size requires --batch");
+    expect([c1, t1]).toEqual([2, expect.stringContaining("--batch-size requires --batch")]);
     const [c2, t2] = await run(["--batch", "--directive", file]);
     expect([c2, t2]).toEqual([2, expect.stringContaining("do not apply to --batch")]);
     const [c3, t3] = await run(["--batch", "--no-early-stop"]);

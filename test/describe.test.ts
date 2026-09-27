@@ -19,7 +19,7 @@ function writeFile(file: string, body: string): void {
   fs.writeFileSync(file, body);
 }
 
-function withConfig<T>(cfg: string, cwd: string, fn: () => T): T {
+function withConfig<T>(cfg: string, fn: () => T): T {
   const prev = process.env.CLAUDE_CONFIG_DIR;
   process.env.CLAUDE_CONFIG_DIR = cfg;
   try {
@@ -40,7 +40,7 @@ describe("loadSkillDocs", () => {
   it("parses a folded multi-line description and appends when_to_use", () => {
     const cfg = path.join(tmp, "folded-");
     skill(cfg, "folded", `---\nname: folded\ndescription: >-\n  Long description that spans\n  several lines\nwhen_to_use: When asked about folding\n---\n`);
-    const docs = withConfig(cfg, tmp, () => loadSkillDocs({ cwd: tmp }));
+    const docs = withConfig(cfg, () => loadSkillDocs({ cwd: tmp }));
     const doc = byName(docs, "folded");
     expect(doc?.kind).toBe("skill");
     expect(doc?.description).toBe("Long description that spans several lines When asked about folding");
@@ -52,7 +52,7 @@ describe("loadSkillDocs", () => {
     skill(cfg, "no-fm", "# just a skill\n");
     skill(cfg, "bad-yaml", "---\ndescription: [unclosed\n---\n");
     skill(cfg, "no-field", "---\nname: x\n---\n");
-    const docs = withConfig(cfg, tmp, () => loadSkillDocs({ cwd: tmp }));
+    const docs = withConfig(cfg, () => loadSkillDocs({ cwd: tmp }));
     expect(docs.map((d) => d.description)).toEqual(["[unclosed", "", ""]); // sorted by name
   });
 
@@ -76,7 +76,7 @@ describe("loadSkillDocs", () => {
       "---",
       "body",
     ].join("\n"));
-    const docs = withConfig(cfg, tmp, () => loadSkillDocs({ cwd: tmp }));
+    const docs = withConfig(cfg, () => loadSkillDocs({ cwd: tmp }));
     expect(byName(docs, "mr")?.description).toBe(
       "Create and review MRs on the internal GitLab Any mention of merge requests or CI pipelines",
     );
@@ -86,7 +86,7 @@ describe("loadSkillDocs", () => {
   it("marks user and project docs with plugin null", () => {
     const cfg = path.join(tmp, "plugnull-");
     skill(cfg, "plain", "---\ndescription: A plain user skill with a long description\n---\n");
-    const docs = withConfig(cfg, tmp, () => loadSkillDocs({ cwd: tmp }));
+    const docs = withConfig(cfg, () => loadSkillDocs({ cwd: tmp }));
     expect(byName(docs, "plain")?.plugin).toBeNull();
   });
 
@@ -95,7 +95,7 @@ describe("loadSkillDocs", () => {
     const cwd = fs.mkdtempSync(path.join(tmp, "proj-"));
     skill(cfg, "shared", "---\ndescription: user level description\n---\n");
     skill(path.join(cwd, ".claude"), "shared", "---\ndescription: project level description\n---\n");
-    const docs = withConfig(cfg, cwd, () => loadSkillDocs({ cwd }));
+    const docs = withConfig(cfg, () => loadSkillDocs({ cwd }));
     expect(byName(docs, "shared")?.description).toBe("project level description");
   });
 
@@ -104,7 +104,7 @@ describe("loadSkillDocs", () => {
     writeFile(path.join(cfg, "commands", "deploy.md"), "---\ndescription: command description\n---\n");
     skill(cfg, "deploy", "---\ndescription: skill description\n---\n");
     writeFile(path.join(cfg, "commands", "build.md"), "---\ndescription: build something from source files\n---\n");
-    const docs = withConfig(cfg, tmp, () => loadSkillDocs({ cwd: tmp }));
+    const docs = withConfig(cfg, () => loadSkillDocs({ cwd: tmp }));
     expect(byName(docs, "deploy")).toMatchObject({ kind: "skill", description: "skill description" });
     expect(byName(docs, "build")).toMatchObject({ kind: "command" });
   });
@@ -115,7 +115,7 @@ describe("loadSkillDocs", () => {
     writeFile(path.join(real, "linked", "SKILL.md"), "---\ndescription: reached through a symlink\n---\n");
     fs.mkdirSync(path.join(cfg, "skills"), { recursive: true });
     fs.symlinkSync(path.join(real, "linked"), path.join(cfg, "skills", "linked"), "dir");
-    const docs = withConfig(cfg, tmp, () => loadSkillDocs({ cwd: tmp }));
+    const docs = withConfig(cfg, () => loadSkillDocs({ cwd: tmp }));
     expect(byName(docs, "linked")?.description).toBe("reached through a symlink");
   });
 
@@ -124,7 +124,7 @@ describe("loadSkillDocs", () => {
     skill(cfg, "zeta", "---\ndescription: zzz\n---\n");
     skill(cfg, "alpha", "---\ndescription: aaa\n---\n");
     writeFile(path.join(cfg, "commands", "mid.md"), "---\ndescription: mmm\n---\n");
-    const docs = withConfig(cfg, tmp, () => loadSkillDocs({ cwd: tmp }));
+    const docs = withConfig(cfg, () => loadSkillDocs({ cwd: tmp }));
     expect(docs.map((d) => d.name)).toEqual(["alpha", "mid", "zeta"]);
   });
 });
@@ -148,7 +148,7 @@ describe("loadSkillDocs plugins", () => {
   const names = (docs: SkillDoc[]): string[] => docs.map((d) => d.name);
 
   function load(cfg: string, cwd: string): SkillDoc[] {
-    return withConfig(cfg, cwd, () => loadSkillDocs({ cwd }));
+    return withConfig(cfg, () => loadSkillDocs({ cwd }));
   }
 
   it("reads skills and commands listed in the manifest", () => {
