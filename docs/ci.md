@@ -111,6 +111,33 @@ A failing case fails the step, so a step that reads the outputs needs
 `if: always()`. `skillcheck.xml` still works with `actions/upload-artifact`
 or a JUnit reporter action.
 
+### Only the skills a pull request touched
+
+`--skill` keeps the cases that mention the given skills, so a pull request
+can pay only for what it changed. Skills here live in `skills/<name>/`:
+
+```yaml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: changed
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          names=$(git diff --name-only "origin/$BASE...HEAD" -- skills/ | cut -d/ -f2 | sort -u | paste -sd, -)
+          echo "skills=$names" >> "$GITHUB_OUTPUT"
+      - if: steps.changed.outputs.skills != ''
+        uses: icntswm/skillcheck@v1
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          args: --skill ${{ steps.changed.outputs.skills }}
+```
+
+A change to another skill can still steal requests from an untouched one, so
+run the whole suite on a schedule or before a release.
+
 Without the action, [examples/github-actions.yml](../examples/github-actions.yml) runs on pull
 requests that touch `skills/` or the suite: `lint` first (free), then `run`
 with three repeats, a $5 budget and the JUnit report uploaded as an artifact.

@@ -86,6 +86,22 @@ skillcheck run --only cart-flaky --repeat 5
 Then either fix the descriptions or accept it with a threshold:
 `repeat: 3, threshold: 0.67` on that case tolerates one miss in three.
 
+## From skill-creator
+
+Anthropic's skill-creator tunes a description against a trigger eval set: a
+JSON list of requests marked `should_trigger: true` or `false`. skillcheck
+checks triggering the same way, through `claude -p` with your real skill
+list, so that set makes a ready suite to keep the tuned description from
+regressing:
+
+```
+skillcheck import eval_set.json --skill pdf-forms -o skillcheck.yaml
+```
+
+`should_trigger: true` becomes `expect`, `false` becomes `forbid`: another
+skill may load on those requests, only this one must not. Without `-o` the
+suite goes to stdout, so it can be merged into an existing file by hand.
+
 ## Running a subset
 
 - `--skill find-bug,test-guard`: only the cases that mention those skills,

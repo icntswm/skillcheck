@@ -120,6 +120,10 @@ skillcheck run --only 2,5    # confirm what the batch flagged
 `skillcheck list` prints the skills and slash commands Claude Code sees. It
 stops Claude Code before the first model call, so it costs nothing.
 
+Already tuned a description with Anthropic's skill-creator? `skillcheck import
+eval_set.json --skill <name>` turns its trigger eval set into cases (see
+[Writing cases](docs/writing-cases.md#from-skill-creator)).
+
 ## Documentation
 
 | | |

@@ -21,6 +21,7 @@ import {
 import { confusion } from "./confusion.js";
 import { loadSkillDocs, type SkillDoc } from "./describe.js";
 import { aggregate, judge, type CaseResult, type RunVerdict } from "./judge.js";
+import { evalSetToSuite, type ImportedSuite } from "./import.js";
 import { toJunit } from "./junit.js";
 import { lint, LINT_DEFAULTS, type LintReport } from "./lint.js";
 import { toMarkdown } from "./markdown.js";
@@ -37,6 +38,8 @@ Usage:
   skillcheck lint [file] [options]    static checks on descriptions and cases
   skillcheck list [options]           print the skills and commands the agent can load
   skillcheck init [file] [options]    write a starter cases file with those names
+  skillcheck import <file> --skill <name>
+                                      turn a skill-creator trigger eval set into cases
 
 run options:
   -a, --agent <name>     agent to route with (default: suite or claude)
@@ -70,6 +73,9 @@ list/init options:
                          CLAUDE_CONFIG_DIR; run, list and init also set it for the agent
 init options:
       --force            overwrite an existing file
+import options:
+      --skill <name>     the skill the eval set is about
+  -o, --out <file>       write the cases there instead of stdout (--force overwrites)
 common:
   -h, --help             show this help
       --version          show version
@@ -80,6 +86,8 @@ nothing reaches the model and nothing is billed, even when not logged in.
 
 Exit codes: 0 all passed, 1 some case failed or was skipped, 2 config or environment error.
 `;
+
+const COMMANDS = ["run", "check", "lint", "list", "init", "import"];
 
 const OPTIONS = {
   help: { type: "boolean", short: "h", default: false },
@@ -106,6 +114,7 @@ const OPTIONS = {
   strict: { type: "boolean", default: false },
   "config-dir": { type: "string" },
   force: { type: "boolean", default: false },
+  out: { type: "string", short: "o" },
 } satisfies ParseArgsOptionsConfig;
 
 type Values = { [K in keyof typeof OPTIONS]: (typeof OPTIONS)[K]["type"] extends "boolean" ? boolean : string | undefined };
@@ -144,6 +153,7 @@ interface Flags {
   strict: boolean;
   configDir?: string;
   force: boolean;
+  out?: string;
 }
 
 function parseFlags(values: Values, cwd: string): Flags {
@@ -176,6 +186,7 @@ function parseFlags(values: Values, cwd: string): Flags {
     strict: values.strict,
     configDir: values["config-dir"] !== undefined ? resolveConfigDir(values["config-dir"], cwd) : undefined,
     force: values.force,
+    out: values.out,
   };
 }
 
@@ -250,7 +261,7 @@ export async function main(
       io.stderr.write(USAGE);
       return 2;
     }
-    if (command !== "run" && command !== "check" && command !== "lint" && command !== "list" && command !== "init") {
+    if (!COMMANDS.includes(command)) {
       io.stderr.write(`skillcheck: unknown command "${command}"\n\n${USAGE}`);
       return 2;
     }
@@ -258,6 +269,7 @@ export async function main(
     if (command === "lint") return await lintCommand(positionals[1], flags, io);
     if (command === "list") return await listCommand(flags, io, deps);
     if (command === "init") return await initCommand(positionals[1], flags, io, deps);
+    if (command === "import") return importCommand(positionals[1], flags, io);
     const file = casesFile(positionals[1], io);
     if (command === "run") return await runCommand(file, flags, io, deps);
     return await checkCommand(file, flags, io);
@@ -424,6 +436,44 @@ async function initCommand(
     throw new UsageError(`cannot write ${file}: ${(e as Error).message}`);
   }
   io.stdout.write(`wrote ${file} (${skills.length} skills listed)\n`);
+  return 0;
+}
+
+function importCommand(positional: string | undefined, flags: Flags, io: Io): number {
+  if (positional === undefined) {
+    throw new UsageError("import needs the eval set file: skillcheck import <eval_set.json> --skill <name>");
+  }
+  const skill = flags.skill?.trim();
+  if (!skill || skill.includes(",")) throw new UsageError("import needs --skill <name>: the skill the eval set is about");
+  const source = path.resolve(io.cwd, positional);
+  let data: unknown;
+  try {
+    data = JSON.parse(fs.readFileSync(source, "utf8"));
+  } catch (e) {
+    throw new UsageError(`cannot read ${positional}: ${(e as Error).message}`);
+  }
+  let suite: ImportedSuite;
+  try {
+    suite = evalSetToSuite(data, skill, source);
+  } catch (e) {
+    if (e instanceof ConfigError) throw new UsageError(`${positional}: ${e.errors.join("; ")}`);
+    throw e;
+  }
+  if (flags.out === undefined) {
+    io.stdout.write(suite.text);
+    return 0;
+  }
+  const out = path.resolve(io.cwd, flags.out);
+  if (fs.existsSync(out) && !flags.force) throw new UsageError(`${flags.out} exists, use --force to overwrite`);
+  try {
+    fs.writeFileSync(out, suite.text);
+  } catch (e) {
+    throw new UsageError(`cannot write ${flags.out}: ${(e as Error).message}`);
+  }
+  const total = suite.positive + suite.negative;
+  io.stdout.write(
+    `wrote ${flags.out} (${total} cases: ${suite.positive} should load ${skill}, ${suite.negative} should not)\n`,
+  );
   return 0;
 }
 

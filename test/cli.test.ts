@@ -954,3 +954,69 @@ describe("cli init", () => {
     expect(existsSync(path.join(tmp, "skillcheck.yaml"))).toBe(true);
   });
 });
+
+describe("cli import", () => {
+  const EVAL_SET = [
+    { query: "fill this pdf form", should_trigger: true },
+    { query: "merge two pdfs", should_trigger: false },
+    { query: "what fields does it have", should_trigger: true },
+  ];
+
+  it("prints the cases to stdout", async () => {
+    const file = writeCases("eval_set.json", EVAL_SET);
+    const out = new Sink();
+    const err = new Sink();
+    const code = await main(["import", file, "--skill", "pdf-forms"], { stdout: out, stderr: err, cwd: tmp });
+    expect(code).toBe(0);
+    expect(err.text).toBe("");
+    expect(out.text).toContain('  - query: "merge two pdfs"\n    forbid: [pdf-forms]\n');
+  });
+
+  it("writes --out relative to cwd, and check accepts the file", async () => {
+    writeCases("eval_set.json", EVAL_SET);
+    const out = new Sink();
+    const code = await main(["import", "eval_set.json", "--skill", "pdf-forms", "-o", "cases.yaml"],
+      { stdout: out, stderr: out, cwd: tmp });
+    expect(code).toBe(0);
+    expect(out.text).toBe("wrote cases.yaml (3 cases: 2 should load pdf-forms, 1 should not)\n");
+    const file = path.join(tmp, "cases.yaml");
+    const out2 = new Sink();
+    expect(await main(["check", file, "--no-name-check"], { stdout: out2, stderr: out2, cwd: tmp })).toBe(0);
+    expect(out2.text).toBe(`${file}: 3 cases, ok\n`);
+  });
+
+  it("refuses to overwrite without --force", async () => {
+    writeCases("eval_set.json", EVAL_SET);
+    writeCases("cases.yaml", "keep me");
+    const out = new Sink();
+    const args = ["import", "eval_set.json", "--skill", "pdf-forms", "--out", "cases.yaml"];
+    expect(await main(args, { stdout: out, stderr: out, cwd: tmp })).toBe(2);
+    expect(out.text).toBe("skillcheck: cases.yaml exists, use --force to overwrite\n");
+    expect(readFileSync(path.join(tmp, "cases.yaml"), "utf8")).toBe("keep me");
+    expect(await main([...args, "--force"], { stdout: out, stderr: out, cwd: tmp })).toBe(0);
+    expect(readFileSync(path.join(tmp, "cases.yaml"), "utf8")).toContain("expect: [pdf-forms]");
+  });
+
+  it.each([
+    [["import", "eval_set.json"], "import needs --skill <name>: the skill the eval set is about"],
+    [["import", "eval_set.json", "--skill", "a,b"], "import needs --skill <name>: the skill the eval set is about"],
+    [["import", "--skill", "a"], "import needs the eval set file: skillcheck import <eval_set.json> --skill <name>"],
+    [["import", "missing.json", "--skill", "a"], "cannot read missing.json: ENOENT"],
+    [["import", "bad.json", "--skill", "a"], "cannot read bad.json: "],
+    [["import", "wrong.json", "--skill", "a"], "wrong.json: item 1: should_trigger must be true or false"],
+  ])("exits 2 on %j", async (args, message) => {
+    writeCases("eval_set.json", EVAL_SET);
+    writeCases("bad.json", "{not json");
+    writeCases("wrong.json", [{ query: "q", should_trigger: 1 }]);
+    const out = new Sink();
+    expect(await main(args, { stdout: out, stderr: out, cwd: tmp })).toBe(2);
+    expect(out.text).toContain(`skillcheck: ${message}`);
+  });
+
+  it("is in the help", async () => {
+    const out = new Sink();
+    await main(["--help"], { stdout: out, stderr: out, cwd: tmp });
+    expect(out.text).toContain("skillcheck import <file> --skill <name>");
+    expect(out.text).toContain("-o, --out <file>");
+  });
+});
