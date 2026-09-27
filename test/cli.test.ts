@@ -201,6 +201,15 @@ describe("cli run", () => {
     expect(calls[0]?.earlyStop).toBe(false);
   });
 
+  it("accepts the -a and -m short forms from the help", async () => {
+    const file = writeCases("cases.json", SUITE);
+    const calls: RunOptions[] = [];
+    const adapter = fakeAdapter({ "why does it fail": { loaded: ["find-bug"] }, "flaky on retry": { loaded: ["test-guard"] } }, calls);
+    const out = new Sink();
+    expect(await main(["run", file, "-a", "claude", "-m", "haiku"], { stdout: out, stderr: out, cwd: tmp }, { adapter })).toBe(0);
+    expect(calls[0]?.model).toBe("haiku");
+  });
+
   it("exits 2 on a broken cases file or a bad flag", async () => {
     const bad = writeCases("bad.json", "{ not json");
     const out = new Sink();

@@ -104,7 +104,7 @@ const COMMANDS = ["run", "check", "lint", "list", "init", "import", "gen"];
 const OPTIONS = {
   help: { type: "boolean", short: "h", default: false },
   version: { type: "boolean", default: false },
-  agent: { type: "string" },
+  agent: { type: "string", short: "a" },
   model: { type: "string", short: "m" },
   jobs: { type: "string", short: "j" },
   only: { type: "string" },
