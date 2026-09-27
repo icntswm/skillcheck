@@ -12,7 +12,7 @@ const fakeBin = path.join(here, "bin", "fake-claude.mjs");
 const fixtures = path.join(here, "fixtures");
 
 const ENV_KEYS = [
-  "SKILLCHECK_CLAUDE_BIN", "FAKE_FIXTURE", "FAKE_HANG", "FAKE_EXIT",
+  "SKILLCHECK_CLAUDE_BIN", "FAKE_FIXTURE", "FAKE_HANG", "FAKE_IGNORE_TERM", "FAKE_EXIT",
   "FAKE_STDERR", "FAKE_ARGS_OUT", "CLAUDE_PROJECT_DIR", "CLAUDE_CONFIG_DIR",
 ];
 
@@ -81,12 +81,24 @@ describe("ClaudeAdapter", () => {
     const started = Date.now();
     const run = new ClaudeAdapter().run(opts({ earlyStop: false }));
     while (!existsSync(argsOut)) await new Promise((r) => setTimeout(r, 20));
-    abortActiveRuns();
+    await abortActiveRuns();
     const r = await run;
     expect(Date.now() - started).toBeLessThan(5_000);
     expect(r.error).toMatch(/claude exited/);
     const { cwd } = JSON.parse(readFileSync(argsOut, "utf8")) as { cwd: string };
     expect(existsSync(cwd)).toBe(false);
+  });
+
+  it("abortActiveRuns falls back to SIGKILL when the process ignores SIGTERM", async () => {
+    const argsOut = path.join(tmp, "args.json");
+    process.env.FAKE_ARGS_OUT = argsOut;
+    process.env.FAKE_HANG = "1";
+    process.env.FAKE_IGNORE_TERM = "1";
+    const run = new ClaudeAdapter().run(opts({ earlyStop: false }));
+    while (!existsSync(argsOut)) await new Promise((r) => setTimeout(r, 20));
+    await abortActiveRuns(200);
+    const r = await run;
+    expect(r.error).toMatch(/claude exited with code SIGKILL/);
   });
 
   it("does not stop early when earlyStop is false; times out instead", async () => {

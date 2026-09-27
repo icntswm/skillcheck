@@ -227,21 +227,43 @@ interface StreamRun {
 /** Live runs by process group id, with their tmp dirs; see abortActiveRuns. */
 const active = new Map<number, string>();
 
+function groupAlive(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Kill every running claude group and remove its tmp dir. Runs are detached
  * process groups, so Ctrl+C on skillcheck does not reach them: without this
- * they keep running (and billing) after skillcheck exits.
+ * they keep running (and billing) after skillcheck exits. Groups still alive
+ * after graceMs get SIGKILL, so a process that ignores SIGTERM dies too.
  */
-export function abortActiveRuns(): void {
-  for (const [pid, workdir] of active) {
+export async function abortActiveRuns(graceMs = KILL_GRACE_MS): Promise<void> {
+  const runs = [...active];
+  active.clear();
+  for (const [pid] of runs) {
     try {
       process.kill(-pid, "SIGTERM");
     } catch {
       // already exited
     }
+  }
+  const deadline = Date.now() + graceMs;
+  while (runs.some(([pid]) => groupAlive(pid)) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  for (const [pid, workdir] of runs) {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      // already exited
+    }
     rmSync(workdir, { recursive: true, force: true });
   }
-  active.clear();
 }
 
 const LOGIN_HINT = " — with --config-dir, auth comes from ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)";

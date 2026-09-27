@@ -761,8 +761,9 @@ if (invokedDirectly()) {
   // agent runs are detached process groups that Ctrl+C does not reach
   for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
     process.once(signal, () => {
-      abortActiveRuns();
-      process.exit(code);
+      // a second Ctrl+C during the grace period exits at once
+      process.once(signal, () => process.exit(code));
+      void abortActiveRuns().finally(() => process.exit(code));
     });
   }
   main(process.argv.slice(2)).then((code) => {

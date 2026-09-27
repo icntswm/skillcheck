@@ -23,6 +23,9 @@ if (process.env.FAKE_FIXTURE) {
   }
 }
 
+// a stuck process that only SIGKILL ends
+if (process.env.FAKE_IGNORE_TERM === "1") process.on("SIGTERM", () => {});
+
 if (process.env.FAKE_HANG === "1") {
   // stay alive until killed: proves early stop / timeout actually kill the group
   setInterval(() => {}, 1000);
