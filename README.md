@@ -36,7 +36,7 @@ requests.
   from a broken one instead of letting you guess.
 - 🏷️ **Catches renames and typos.** Case names are checked against the skills
   the agent really has, so a renamed skill can't pass silently.
-- ⚙️ **CI-ready.** A GitHub Action (`uses: icntswm/skillcheck@v0`), JUnit
+- ⚙️ **CI-ready.** A GitHub Action (`uses: icntswm/skillcheck@v1`), JUnit
   and JSON reports, clear exit codes, a spending cap (`--budget`), and
   `--config-dir` to test only the skills in your repository.
 - 📄 **Plain YAML, one dependency.** Cases are readable by anyone on the team
