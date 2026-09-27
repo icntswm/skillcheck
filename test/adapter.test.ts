@@ -1,9 +1,9 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import * as os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ClaudeAdapter } from "../src/agents/claude.js";
+import { abortActiveRuns, ClaudeAdapter } from "../src/agents/claude.js";
 import { BATCH_SCHEMA } from "../src/batch.js";
 import type { RunOptions } from "../src/agents/types.js";
 
@@ -38,6 +38,7 @@ describe("ClaudeAdapter", () => {
 
   afterEach(() => {
     for (const key of ENV_KEYS) delete process.env[key];
+    rmSync(tmp, { recursive: true, force: true });
   });
 
   it("parses a fixture stream and reports no error", async () => {
@@ -60,6 +61,32 @@ describe("ClaudeAdapter", () => {
     expect(r.stoppedEarly).toBe(true);
     expect(r.loaded).toEqual(["a", "b"]);
     expect(r.error).toBeNull();
+  });
+
+  it("kills a hanging process after the result event without calling it an early stop", async () => {
+    process.env.FAKE_FIXTURE = path.join(fixtures, "synthetic-garbage.jsonl");
+    process.env.FAKE_HANG = "1";
+    const started = Date.now();
+    const r = await new ClaudeAdapter().run(opts());
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(r.stoppedEarly).toBe(false);
+    expect(r.costUsd).toBeCloseTo(0.02, 10);
+    expect(r.error).toBeNull();
+  });
+
+  it("abortActiveRuns kills live runs and removes their tmp dirs", async () => {
+    const argsOut = path.join(tmp, "args.json");
+    process.env.FAKE_ARGS_OUT = argsOut;
+    process.env.FAKE_HANG = "1";
+    const started = Date.now();
+    const run = new ClaudeAdapter().run(opts({ earlyStop: false }));
+    while (!existsSync(argsOut)) await new Promise((r) => setTimeout(r, 20));
+    abortActiveRuns();
+    const r = await run;
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(r.error).toMatch(/claude exited/);
+    const { cwd } = JSON.parse(readFileSync(argsOut, "utf8")) as { cwd: string };
+    expect(existsSync(cwd)).toBe(false);
   });
 
   it("does not stop early when earlyStop is false; times out instead", async () => {

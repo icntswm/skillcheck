@@ -194,7 +194,8 @@ function pluginDocs(configRoot: string, cwd: string): SkillDoc[] {
       if (entry.scope !== "user" && !(scoped && entry.projectPath === cwd)) continue;
       const installPath = entry.installPath;
       if (typeof installPath !== "string" || installPath === "") continue;
-      out.push(...pluginSkillDocs(plugin, installPath), ...pluginCommandDocs(plugin, installPath));
+      const manifest = pluginManifest(installPath);
+      out.push(...pluginSkillDocs(plugin, installPath, manifest), ...pluginCommandDocs(plugin, installPath, manifest));
     }
   }
   return out;
@@ -210,8 +211,10 @@ function disabledPlugins(configRoot: string): Set<string> {
   return out;
 }
 
-function pluginSkillDocs(plugin: string, installPath: string): SkillDoc[] {
-  const declared = pluginManifest(installPath)?.skills;
+type Manifest = Record<string, unknown> | null;
+
+function pluginSkillDocs(plugin: string, installPath: string, manifest: Manifest): SkillDoc[] {
+  const declared = manifest?.skills;
   const dirs = Array.isArray(declared)
     ? declared.filter((s): s is string => typeof s === "string").map((rel) => path.resolve(installPath, rel))
     : skillDirNames(path.join(installPath, "skills")).map((name) => path.join(installPath, "skills", name));
@@ -226,8 +229,8 @@ function pluginSkillDocs(plugin: string, installPath: string): SkillDoc[] {
   return out;
 }
 
-function pluginCommandDocs(plugin: string, installPath: string): SkillDoc[] {
-  const declared = pluginManifest(installPath)?.commands;
+function pluginCommandDocs(plugin: string, installPath: string, manifest: Manifest): SkillDoc[] {
+  const declared = manifest?.commands;
   let files: string[];
   if (Array.isArray(declared)) {
     files = [];
@@ -256,7 +259,7 @@ function commandFiles(dir: string): string[] {
   return commandNames(dir).map((name) => path.join(dir, `${name}.md`));
 }
 
-function pluginManifest(installPath: string): Record<string, unknown> | null {
+function pluginManifest(installPath: string): Manifest {
   return readJson(path.join(installPath, ".claude-plugin", "plugin.json"));
 }
 

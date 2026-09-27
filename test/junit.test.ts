@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -109,9 +109,11 @@ describe("toJunit", () => {
   });
 
   it("is well-formed XML when xmllint is available", () => {
-    const file = path.join(mkdtempSync(path.join(os.tmpdir(), "skillcheck-junit-")), "r.xml");
+    const dir = mkdtempSync(path.join(os.tmpdir(), "skillcheck-junit-"));
+    const file = path.join(dir, "r.xml");
     writeFileSync(file, sample());
     const lint = spawnSync("xmllint", ["--noout", file], { encoding: "utf8" });
+    rmSync(dir, { recursive: true, force: true });
     if (lint.error && (lint.error as NodeJS.ErrnoException).code === "ENOENT") return; // not installed, skip
     expect(lint.status).toBe(0);
   });

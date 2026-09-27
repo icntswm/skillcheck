@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { Writable } from "node:stream";
 import * as os from "node:os";
 import path from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { main } from "../src/cli.js";
 import type { AgentAdapter, BatchOptions, BatchResult, RunOptions, RunResult, SkillList } from "../src/agents/types.js";
 
@@ -40,6 +40,9 @@ class Sink extends Writable {
 let tmp: string;
 beforeEach(() => {
   tmp = mkdtempSync(path.join(os.tmpdir(), "skillcheck-cli-"));
+});
+afterEach(() => {
+  rmSync(tmp, { recursive: true, force: true });
 });
 
 function writeCases(name: string, body: unknown): string {
@@ -628,7 +631,7 @@ describe("cli lint", () => {
 
   // two skills with near-identical, long descriptions and one short one
   function seedSkills(): void {
-    cfg = mkdtempSync(path.join(os.tmpdir(), "skillcheck-lint-cfg-"));
+    cfg = mkdtempSync(path.join(tmp, "lint-cfg-"));
     prevCfgDir = process.env.CLAUDE_CONFIG_DIR;
     process.env.CLAUDE_CONFIG_DIR = cfg;
     const skills = {
@@ -673,7 +676,7 @@ describe("cli lint", () => {
   });
 
   it("prints no problems found when nothing is flagged", async () => {
-    cfg = mkdtempSync(path.join(os.tmpdir(), "skillcheck-lint-clean-"));
+    cfg = mkdtempSync(path.join(tmp, "lint-clean-"));
     prevCfgDir = process.env.CLAUDE_CONFIG_DIR;
     process.env.CLAUDE_CONFIG_DIR = cfg;
     try {
@@ -742,7 +745,7 @@ describe("cli lint", () => {
   });
 
   it("wraps uncovered names so every line but the last ends with a comma", async () => {
-    const many = mkdtempSync(path.join(os.tmpdir(), "skillcheck-lint-many-"));
+    const many = mkdtempSync(path.join(tmp, "lint-many-"));
     const prev = process.env.CLAUDE_CONFIG_DIR;
     process.env.CLAUDE_CONFIG_DIR = many;
     try {

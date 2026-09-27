@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { rmSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -49,6 +50,11 @@ export class ClaudeStream {
   /** True after the init event: the two lists above are then complete. */
   get sawInit(): boolean {
     return this.sawInitEvent;
+  }
+
+  /** True after the result event: the run is over, nothing more will come. */
+  get finished(): boolean {
+    return this.sawResult;
   }
 
   /** Feed one stdout line; true means the run can be stopped early. */
@@ -218,6 +224,26 @@ interface StreamRun {
   durationMs: number;
 }
 
+/** Live runs by process group id, with their tmp dirs; see abortActiveRuns. */
+const active = new Map<number, string>();
+
+/**
+ * Kill every running claude group and remove its tmp dir. Runs are detached
+ * process groups, so Ctrl+C on skillcheck does not reach them: without this
+ * they keep running (and billing) after skillcheck exits.
+ */
+export function abortActiveRuns(): void {
+  for (const [pid, workdir] of active) {
+    try {
+      process.kill(-pid, "SIGTERM");
+    } catch {
+      // already exited
+    }
+    rmSync(workdir, { recursive: true, force: true });
+  }
+  active.clear();
+}
+
 const LOGIN_HINT = " — with --config-dir, auth comes from ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)";
 
 /** A fresh config dir has no credentials; point the user at the env vars. */
@@ -322,12 +348,14 @@ export class ClaudeAdapter implements AgentAdapter {
       let stderrText = "";
       let error: string | null = null;
       let stoppedEarly = false;
+      let stopping = false;
       let settled = false;
       let killTimer: NodeJS.Timeout | undefined;
       let timeoutTimer: NodeJS.Timeout | undefined;
 
       // detached => child.pid is the process group id; ESRCH means it is gone
       const killGroup = (pid: number) => {
+        clearTimeout(timeoutTimer); // the run is ending anyway, a late timeout must not overwrite its outcome
         try {
           process.kill(-pid, "SIGTERM");
         } catch {
@@ -346,6 +374,7 @@ export class ClaudeAdapter implements AgentAdapter {
       const finish = (code: number | null, signal: NodeJS.Signals | null) => {
         if (settled) return;
         settled = true;
+        if (child?.pid) active.delete(child.pid);
         if (killTimer) clearTimeout(killTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
         // A non-zero exit is not a failure by itself: error_max_turns is normal.
@@ -366,6 +395,7 @@ export class ClaudeAdapter implements AgentAdapter {
         return;
       }
       const proc = child;
+      if (proc.pid) active.set(proc.pid, workdir);
 
       proc.on("error", (e) => {
         if (!error) error = spawnErrorMessage(e, bin);
@@ -374,19 +404,19 @@ export class ClaudeAdapter implements AgentAdapter {
       proc.stdout?.setEncoding("utf8");
       proc.stdout?.on("data", (chunk: string) => {
         if (!stdoutSeen && chunk.trim() !== "") stdoutSeen = true;
-        tail += chunk;
-        let nl: number;
-        while ((nl = tail.indexOf("\n")) >= 0) {
-          const line = tail.slice(0, nl);
-          tail = tail.slice(nl + 1);
+        const lines = (tail + chunk).split("\n");
+        tail = lines.pop() as string; // the unfinished last line waits for the next chunk
+        for (const line of lines) {
           const stop = stream.push(line); // always parse: stop and abandon only gate the kill
           if (error) continue; // first failure wins, the group is already being killed
           const abandoned = control.abandon?.(stream);
           if (abandoned) {
             error = abandoned;
             if (proc.pid) killGroup(proc.pid);
-          } else if (!stoppedEarly && ((control.earlyStop && stop) || control.stop?.(stream) === true)) {
-            stoppedEarly = true;
+          } else if (!stopping && ((control.earlyStop && stop) || control.stop?.(stream) === true)) {
+            stopping = true;
+            // after the result event the run is complete: the kill only reaps the process
+            stoppedEarly = !stream.finished;
             if (proc.pid) killGroup(proc.pid);
           }
         }

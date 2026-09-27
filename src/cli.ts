@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
-import { ClaudeAdapter, DEFAULT_DIRECTIVE } from "./agents/claude.js";
+import { abortActiveRuns, ClaudeAdapter, DEFAULT_DIRECTIVE } from "./agents/claude.js";
 import type { AgentAdapter, RunResult, SkillList } from "./agents/types.js";
 import { BATCH_SCHEMA, buildBatchPrompt, parseBatchAnswer } from "./batch.js";
 import { Budget } from "./budget.js";
@@ -758,6 +758,13 @@ function invokedDirectly(): boolean {
 }
 
 if (invokedDirectly()) {
+  // agent runs are detached process groups that Ctrl+C does not reach
+  for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
+    process.once(signal, () => {
+      abortActiveRuns();
+      process.exit(code);
+    });
+  }
   main(process.argv.slice(2)).then((code) => {
     process.exitCode = code;
   });
