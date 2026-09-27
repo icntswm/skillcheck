@@ -38,8 +38,9 @@ requests.
   the agent really has, so a renamed skill can't pass silently.
 - ⚙️ **CI-ready.** A GitHub Action (`uses: icntswm/skillcheck@v1`) that
   comments the report on the pull request, JUnit, JSON and Markdown reports,
-  clear exit codes, a spending cap (`--budget`), and `--config-dir` to test
-  only the skills in your repository.
+  clear exit codes, a spending cap (`--budget`), `--baseline` to compare with
+  `main` and fail only on new failures, and `--config-dir` to test only the
+  skills in your repository.
 - 📄 **Plain YAML, one dependency.** Cases are readable by anyone on the team
   and live next to the skills they test.
 
@@ -111,7 +112,8 @@ The command is `skillcheck`. To try it without installing:
 ```
 skillcheck init              # writes skillcheck.yaml listing your skills
                              # then add a few real requests per skill
-skillcheck gen -o skillcheck.yaml  # or: let the model draft cases, then review them
+skillcheck gen -o skillcheck.yaml
+                             # or: the model drafts cases, you review them
 skillcheck check             # validates the file, no model calls
 skillcheck lint              # free static checks
 skillcheck run --batch       # cheap pre-check, one call
@@ -131,7 +133,7 @@ eval_set.json --skill <name>` turns its trigger eval set into cases (see
 |---|---|
 | [Writing cases](docs/writing-cases.md) | the file format and what makes a case catch regressions |
 | [Cost](docs/cost.md) | what a run costs and how to spend less |
-| [Reports and CI](docs/ci.md) | confusion block, JSON, JUnit, Markdown, GitHub Actions, exit codes |
+| [Reports and CI](docs/ci.md) | confusion block, JSON, JUnit, Markdown, GitHub Actions, baseline, exit codes |
 | [How it works](docs/how-it-works.md) | what happens inside a run, and the limits of each level |
 
 `skillcheck --help` lists every command and option.
