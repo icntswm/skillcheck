@@ -62,7 +62,7 @@ run options:
       --junit <path>     JUnit XML report (GitLab/GitHub test reporters) to path
       --markdown <path>  Markdown summary (PR comments, GitHub job summary) to path
       --baseline <path>  earlier --json report: mark regressed, fixed and new cases
-      --only-new-failures  exit 1 only for regressed or new failing cases (needs --baseline)
+      --only-new-failures  exit 1 only for regressed or new failing cases, or budget skips (needs --baseline)
 run/check options:
       --skill <a,b>      keep only cases that mention these skills
 check options:
@@ -552,11 +552,12 @@ async function genCommand(flags: Flags, io: Io, deps: { adapter?: AgentAdapter }
   const dropped = successful.reduce((total, result) => total + result.dropped, 0);
   if (dropped > 0) io.stderr.write(`note: dropped ${dropped} proposed cases naming unknown skills\n`);
   const text = genSuite(cases, { model: flags.model ?? null, skills: targets.map((doc) => doc.name) });
-  const knownCosts = results
-    .filter((result): result is NonNullable<typeof result> => result !== undefined)
-    .map((result) => result.costUsd)
-    .filter((cost): cost is number => cost !== null);
-  const cost = knownCosts.length === 0 ? "?" : knownCosts.reduce((total, value) => total + value, 0).toFixed(2);
+  const costs = results.map((result) => result?.costUsd ?? null);
+  const known = costs.filter((cost): cost is number => cost !== null);
+  const unknown = costs.length - known.length;
+  // a call cut short by a timeout reports no cost but was still billed
+  const cost = known.length === 0 ? "?" : known.reduce((total, value) => total + value, 0).toFixed(2) +
+    (unknown > 0 ? ` + ${unknown} call${unknown === 1 ? "" : "s"} of unknown cost` : "");
   const counts = `${cases.length} cases for ${targets.length} skills, cost $${cost}`;
   if (out === null) {
     io.stdout.write(text);
@@ -732,6 +733,7 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
     budgetReached: skipped.length > 0,
     baseline,
     baselineFile: flags.baseline,
+    suiteCases: suite.cases.map((c) => ({ id: c.id ?? null, query: c.query })),
   });
   reporter.summary(ordered, {
     unavailable,

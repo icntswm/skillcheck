@@ -28,7 +28,10 @@ to narrow the skill on the right, not to widen the one on the left.
   a job summary: a header with the counts, a table of the failed and skipped
   cases, the passed ones folded, and the confusion block.
 - `--baseline report.json` compares the run with an earlier JSON report.
-- `--only-new-failures` exits 1 only for regressed or new failing cases; it requires `--baseline`.
+- `--only-new-failures` exits 1 only for regressed or new failing cases, or
+  cases the budget skipped; it requires `--baseline`. A case the baseline
+  skipped counts as new. Cases left out by `--only` or `--skill` do not count
+  as removed.
 
 ## Exit codes
 

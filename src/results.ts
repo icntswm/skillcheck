@@ -82,6 +82,8 @@ export interface ReportInput {
   budgetReached: boolean;
   baseline?: SuiteReport | null;
   baselineFile?: string;
+  /** every case of the cases file, filtered out ones included */
+  suiteCases?: { id: string | null; query: string }[];
 }
 
 /** The single source of truth for --json and --junit; computed once per run. */
@@ -90,7 +92,7 @@ export function buildReport(input: ReportInput): SuiteReport {
   const costs = [...verdicts.map((v) => v.costUsd), ...(input.skippedRunCosts ?? [])];
   const known = costs.filter((c): c is number => c !== null);
   const cases = input.cases.map(toCaseReport);
-  const comparison = input.baseline ? compare(cases, input.baseline, input.baselineFile ?? input.baseline.file) : null;
+  const comparison = input.baseline ? compare(cases, input.baseline, input.baselineFile ?? input.baseline.file, input.suiteCases ?? cases) : null;
   return {
     tool: "skillcheck",
     version: readVersion(),

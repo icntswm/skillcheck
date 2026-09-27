@@ -1264,6 +1264,7 @@ describe("cli gen", () => {
       { stdout: out, stderr: out, cwd: tmp }, { adapter })).toBe(0);
     expect(out.text).toContain("gen failed for skill-1, skill-2, skill-3, skill-4, skill-5, skill-6, skill-7, skill-8: first group failed");
     expect(out.text).toContain('query: "survivor"');
+    expect(out.text).toContain("drafted 1 cases for 9 skills, cost $0.03 + 1 call of unknown cost\n");
 
     const allOut = new Sink();
     const failing = genAdapter([], () => ({ structured: null, error: "all failed", costUsd: null }));

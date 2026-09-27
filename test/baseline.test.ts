@@ -25,6 +25,10 @@ describe("parseBaseline", () => {
     expect(() => parseBaseline(JSON.stringify(value))).toThrow("not a skillcheck --json report");
   });
 
+  it.each([[null], [{ query: "q", status: "passed" }], [{ id: null, query: 1, status: "passed" }]])("rejects a case entry %j", (entry) => {
+    expect(() => parseBaseline(JSON.stringify({ tool: "skillcheck", cases: [entry] }))).toThrow("case 1 is not a report case");
+  });
+
   it("lets invalid JSON errors through", () => {
     expect(() => parseBaseline("{bad")).toThrow(SyntaxError);
   });
@@ -50,10 +54,20 @@ describe("compare", () => {
     });
   });
 
-  it("does not compare skipped cases", () => {
+  it("counts a case the baseline skipped as new, and does not compare a skipped current case", () => {
     const old = baseline([kase({ id: "old", status: "skipped" }), kase({ id: "current", status: "passed" })]);
     const current = [kase({ id: "old", status: "failed" }), kase({ id: "current", status: "skipped" })];
-    expect(compare(current, old, "x").changes).toEqual([null, null]);
+    const result = compare(current, old, "x");
+    expect(result.changes).toEqual(["new", null]);
+    expect(result.summary.new).toBe(1);
+  });
+
+  it("does not count cases left out by a filter as removed", () => {
+    const old = baseline([kase({ id: "a", status: "passed" }), kase({ id: "b", status: "passed" }), kase({ id: "gone", status: "passed" })]);
+    const current = [kase({ id: "a", status: "passed" })];
+    const suite = [{ id: "a", query: "q" }, { id: "b", query: "q" }];
+    expect(compare(current, old, "x", suite).summary.removed).toBe(1);
+    expect(compare(current, old, "x").summary.removed).toBe(2);
   });
 
   it("matches by id or exact query, keeps ids separate from queries, and uses the first duplicate", () => {

@@ -139,7 +139,11 @@ runs:
         if skillcheck --help | grep -- --markdown > /dev/null; then args+=(--markdown "$RUNNER_TEMP/skillcheck.md"); fi
         if [ -n "$BASELINE" ]; then
           if [ -f "$BASELINE" ]; then
-            if skillcheck --help | grep -- --baseline > /dev/null; then args+=(--baseline "$BASELINE"); fi
+            if skillcheck --help | grep -- --baseline > /dev/null; then
+              args+=(--baseline "$BASELINE")
+            else
+              echo "::warning::this skillcheck version has no --baseline, running without the comparison"
+            fi
           else
             echo "::notice::no baseline at $BASELINE, running without"
           fi
