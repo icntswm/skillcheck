@@ -1,5 +1,5 @@
 {
-  "name": "skillcheck",
+  "name": "@icntswm/skillcheck",
   "version": "0.1.0",
   "description": "Regression tests for Claude Code skills: check that every request still loads the right skill",
   "type": "module",
@@ -40,5 +40,8 @@
     "type": "git",
     "url": "git+https://github.com/icntswm/skillcheck.git"
   },
-  "homepage": "https://github.com/icntswm/skillcheck#readme"
+  "homepage": "https://github.com/icntswm/skillcheck#readme",
+  "publishConfig": {
+    "access": "public"
+  }
 }

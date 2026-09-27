@@ -29,8 +29,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: install claude code
-        run: npm install -g @anthropic-ai/claude-code
+      - name: install claude code and skillcheck
+        run: npm install -g @anthropic-ai/claude-code @icntswm/skillcheck
 
       # An isolated config dir holding only this repo's skills: the run then
       # tests them, not whatever happens to be installed on the runner image.
@@ -42,7 +42,7 @@ jobs:
       # Free: no model calls. Flags short or look-alike descriptions and cases
       # whose expected skill shares few words with the query.
       - name: lint
-        run: npx skillcheck lint skillcheck.yaml --config-dir .skillcheck
+        run: skillcheck lint skillcheck.yaml --config-dir .skillcheck
 
       # 3 repeats at threshold 0.67 tolerate one flaky routing in three;
       # --budget refuses to start new runs past ~$5 of estimated spend.
@@ -50,7 +50,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: >
-          npx skillcheck run skillcheck.yaml
+          skillcheck run skillcheck.yaml
           --config-dir .skillcheck
           --model sonnet
           --repeat 3 --threshold 0.67
