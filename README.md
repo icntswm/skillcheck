@@ -135,6 +135,11 @@ stops Claude Code before the first model call, so it costs nothing.
 Works with Claude Code. Agents sit behind a small adapter interface, so others
 that support skills can be added.
 
+Requests can be in any language: `run` asks the model itself. `lint` compares
+words, so it is tuned for English and Russian, works roughly for other
+languages that put spaces between words, and is of little use for Chinese,
+Japanese or Korean.
+
 ## License
 
 [MIT](LICENSE)
