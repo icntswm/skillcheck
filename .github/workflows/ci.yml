@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # macOS too: runs are killed as process groups, and signals differ by OS
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  package:
+    # vitest needs Node 22+, so Node 20 from engines is covered by the packed CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm pack --pack-destination "$RUNNER_TEMP"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: install the tarball
+        run: npm install -g "$RUNNER_TEMP"/icntswm-skillcheck-*.tgz
+      - name: demo without model calls
+        run: |
+          dir="$RUNNER_TEMP/demo-config"
+          mkdir -p "$dir/skills"
+          cp -R examples/demo/skills/. "$dir/skills/"
+          skillcheck --version
+          skillcheck check examples/demo/skillcheck.yaml --config-dir "$dir"
+          skillcheck lint examples/demo/skillcheck.yaml --config-dir "$dir"
+
+  action:
+    # action.yml wiring, with the published package; lint only, no API key
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./
+        with:
+          file: examples/demo/skillcheck.yaml
+          skills-dir: examples/demo/skills
+          run: "false"
