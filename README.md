@@ -8,51 +8,36 @@
 **Regression tests for Claude Code skills.**
 
 You edited a skill description, installed a plugin or switched models, and now
-some of your requests load the wrong skill. Nothing warns you: the agent still
+some requests load the wrong skill. Nothing warns you: the agent still
 answers, just with the wrong instructions. skillcheck catches this before your
 users do.
 
 ![skillcheck catching a routing regression](docs/assets/demo.gif)
 
-A real run on the [demo](examples/demo): one skill's description got wider,
-and it started taking requests that belong to its neighbour. The free `lint`
-flags a suspicious description, and one batch call finds the two misrouted
-requests.
+<sub>A real run on the [demo](examples/demo): one description got wider and
+started taking its neighbour's requests. The free `lint` flags it, one batch
+call finds both misrouted requests.</sub>
 
-## What you get
+## Quick start
 
-- 🎯 **The real routing decision.** skillcheck runs Claude Code itself and reads
-  which skills the model actually loads. Nothing is simulated or guessed from
-  keywords.
-- 💸 **Cheap by design.** Free static checks first. Then one batch call covers
-  25 requests. A full run stops Claude Code the moment it picks a skill, so
-  you pay for the decision, not for the work.
-- 🔍 **Points at the fix.** The confusion block shows which skill took whose
-  requests. When the model names the right skill but doesn't load it, the
-  report says so separately.
-- 🛡️ **Safe on any project.** Runs go in plan mode with edits, shell, web and
-  MCP tools disabled. Your files are never touched.
-- 🧪 **Honest about randomness.** `--repeat` and `threshold` tell a flaky case
-  from a broken one instead of letting you guess.
-- 🏷️ **Catches renames and typos.** Case names are checked against the skills
-  the agent really has, so a renamed skill can't pass silently.
-- ⚙️ **CI-ready.** A GitHub Action (`uses: icntswm/skillcheck@v1`) that
-  comments the report on the pull request, JUnit, JSON and Markdown reports,
-  clear exit codes, a spending cap (`--budget`), `--baseline` with
-  `--only-new-failures` to compare with `main` and fail only on new failures,
-  and `--config-dir` to test only the skills in your repository.
-- 📄 **Plain YAML, one dependency.** Cases are readable by anyone on the team
-  and live next to the skills they test.
+Needs Node 20+ and [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+(`claude`) in `PATH`, logged in.
 
-## When to run it
+```sh
+npm install -g @icntswm/skillcheck
 
-- after you rewrite or shorten a skill description;
-- when you add a skill that sounds like an existing one;
-- after installing a plugin that brings its own skills;
-- before switching to another model;
-- on every pull request that touches `skills/`.
+skillcheck init               # skillcheck.yaml listing your skills; add real requests
+skillcheck lint               # free static checks, no model calls
+skillcheck run --batch        # cheap pre-check: one call per 25 cases
+skillcheck run --only 2,5     # confirm what the batch flagged with real runs
+```
 
-## How it works in one minute
+No cases yet? `skillcheck gen -o skillcheck.yaml` lets the model draft them from
+your skill descriptions, for you to review. Coming from Anthropic's
+skill-creator? `skillcheck import eval_set.json --skill <name>` converts its
+trigger eval set. To try without installing: `npx @icntswm/skillcheck lint`.
+
+## How it works
 
 Write requests the way you actually type them, and say which skill must, or
 must not, load:
@@ -67,86 +52,67 @@ cases:
 ```
 
 skillcheck sends each request to a headless `claude -p`, watches which skills
-the model loads, and stops the process as soon as the answer is clear.
+the model loads, and stops the process as soon as the answer is clear. Runs go
+in plan mode with edits, shell, web and MCP tools off, so your files are never
+touched.
 
-## Three levels, from free to exact
-
-Start at the cheapest level and go up only when it finds nothing.
+Three levels, from free to exact. Go up only when the cheaper one finds nothing:
 
 | Command | Model calls | What it tells you |
 |---|---|---|
-| `skillcheck lint` | none | short descriptions, look-alike skills, cases whose expected skill shares few words with the request |
+| `skillcheck lint` | none | short or look-alike descriptions, cases that share few words with their skill |
 | `skillcheck run --batch` | one per 25 cases | which skill the model *says* it would load |
 | `skillcheck run` | one per case | which skill the model *actually* loads |
 
-On the demo suite one batch call covered all 12 cases for $0.05–0.10 and agreed
-with the normal run in 34 checks out of 34. More in [docs/cost.md](docs/cost.md).
+On the [demo](examples/demo) (six skills, twelve cases, a bad edit of two
+descriptions) `lint` flagged the short description, and both `run --batch` and
+`run` caught the two misrouted cases. One batch call cost $0.05–0.10 and agreed
+with the full run in 34 checks out of 34.
 
-## Does it really catch regressions?
+## What you get
 
-Yes, and the [demo](examples/demo) shows it: six skills, twelve cases and a bad
-edit of two descriptions.
+- 🎯 **The real routing decision**, read from Claude Code itself, not guessed from keywords.
+- 💸 **You pay for the decision, not the work**: a run stops the moment a skill is picked.
+- 🔍 **Points at the fix**: the confusion block shows which skill took whose requests.
+- 🧪 **Honest about randomness**: `--repeat` and `threshold` tell a flaky case from a broken one.
+- 🏷️ **Catches renames**: case names are checked against the skills the agent really has.
+- 📄 **Plain YAML, one dependency**: cases live next to the skills they test.
 
-| | good skills | bad edit |
-|---|---|---|
-| `lint` | no problems | flags the too-short description |
-| `run --batch` | 12/12 passed | catches both misrouted cases |
-| `run` | 5/5 passed | catches the same two cases |
+## In CI
 
-The demo README also lists edits that did *not* break routing, and why.
-
-## Install
-
-Needs Node 20+ and [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-(`claude`) in `PATH`, logged in.
-
-```
-npm install -g @icntswm/skillcheck
-```
-
-The command is `skillcheck`. To try it without installing:
-`npx @icntswm/skillcheck lint`.
-
-## Quick start
-
-```
-skillcheck init              # writes skillcheck.yaml listing your skills
-                             # then add a few real requests per skill
-skillcheck gen -o skillcheck.yaml
-                             # or: the model drafts cases, you review them
-skillcheck check             # validates the file, no model calls
-skillcheck lint              # free static checks
-skillcheck run --batch       # cheap pre-check, one call
-skillcheck run --only 2,5    # confirm what the batch flagged
+```yaml
+- uses: icntswm/skillcheck@v1
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  with:
+    model: sonnet
+    budget: 2
 ```
 
-`skillcheck list` prints the skills and slash commands Claude Code sees. It
-stops Claude Code before the first model call, so it costs nothing.
-
-Already tuned a description with Anthropic's skill-creator? `skillcheck import
-eval_set.json --skill <name>` turns its trigger eval set into cases (see
-[Writing cases](docs/writing-cases.md#from-skill-creator)).
+The action tests only the skills in your repository, comments the report on the
+pull request and writes JUnit, JSON and Markdown reports. `--budget` caps the
+spend; `--baseline` with `--only-new-failures` compares with `main` and fails
+only on new failures. Run it after you rewrite a description, add a skill that
+sounds like an existing one, install a plugin, or switch models.
 
 ## Documentation
 
 | | |
 |---|---|
-| [Writing cases](docs/writing-cases.md) | the file format and what makes a case catch regressions |
+| [Writing cases](docs/writing-cases.md) | the file format, what makes a good case, `gen` and `import` |
 | [Cost](docs/cost.md) | what a run costs and how to spend less |
-| [Reports and CI](docs/ci.md) | confusion block, JSON, JUnit, Markdown, GitHub Actions, baseline, exit codes |
+| [Reports and CI](docs/ci.md) | confusion block, reports, GitHub Actions, baseline, exit codes |
 | [How it works](docs/how-it-works.md) | what happens inside a run, and the limits of each level |
 
 `skillcheck --help` lists every command and option.
 
 ## Status
 
-Works with Claude Code. Agents sit behind a small adapter interface, so others
-that support skills can be added.
-
-Requests can be in any language: `run` asks the model itself. `lint` compares
-words, so it is tuned for English and Russian, works roughly for other
-languages that put spaces between words, and is of little use for Chinese,
-Japanese or Korean.
+Works with Claude Code; other agents with skills can be added behind a small
+adapter interface. Requests can be in any language: `run` asks the model
+itself. `lint` compares words, so it is tuned for English and Russian, works
+roughly for other languages with spaces between words, and is of little use for
+Chinese, Japanese or Korean.
 
 ## License
 
