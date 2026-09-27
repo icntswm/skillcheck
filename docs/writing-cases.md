@@ -94,6 +94,11 @@ about the price of one batch call per group. The result is only a draft: review
 every case, remove guesses, and add real phrasings from your request history,
 because generated requests tend to be cleaner than real ones.
 
+Plugin authors can use `skillcheck gen --plugin plugin-name` to draft cases only
+for that installed plugin's skills. After adding a skill, `skillcheck gen
+--append skillcheck.yaml` drafts only skills the file does not cover, skips
+duplicate queries, and preserves existing YAML comments.
+
 ## From skill-creator
 
 Anthropic's skill-creator tunes a description against a trigger eval set: a

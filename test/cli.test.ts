@@ -1142,6 +1142,8 @@ describe("cli import", () => {
     await main(["--help"], { stdout: out, stderr: out, cwd: tmp });
     expect(out.text).toContain("skillcheck import <file> --skill <name>");
     expect(out.text).toContain("-o, --out <file>");
+    expect(out.text).toContain("--plugin <name>");
+    expect(out.text).toContain("--append <file>");
   });
 });
 
@@ -1158,6 +1160,24 @@ describe("cli gen", () => {
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, "SKILL.md"), `---\ndescription: Handle requests about ${name}\n---\nbody\n`);
     }
+  }
+
+  function seedPlugin(config: string, name: string, skills: string[], commands: string[] = []): void {
+    const install = path.join(tmp, `${name}-install`);
+    for (const skill of skills) {
+      const dir = path.join(install, "skills", skill);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, "SKILL.md"), `---\ndescription: Handle ${skill}\n---\n`);
+    }
+    for (const command of commands) {
+      mkdirSync(path.join(install, "commands"), { recursive: true });
+      writeFileSync(path.join(install, "commands", `${command}.md`), `---\ndescription: ${command}\n---\n`);
+    }
+    mkdirSync(path.join(config, "plugins"), { recursive: true });
+    writeFileSync(path.join(config, "plugins", "installed_plugins.json"), JSON.stringify({
+      version: 2,
+      plugins: { [`${name}@market`]: [{ scope: "user", installPath: install }] },
+    }));
   }
 
   function genAdapter(
@@ -1279,5 +1299,124 @@ describe("cli gen", () => {
     expect(await main(["gen", "--config-dir", emptyConfig(), "--per-skill", "0"],
       { stdout: out, stderr: out, cwd: tmp }, { adapter: genAdapter([]) })).toBe(2);
     expect(out.text).toContain("--per-skill must be an integer >= 1");
+  });
+
+  it("selects one installed plugin and validates plugin errors", async () => {
+    const config = emptyConfig();
+    seedPlugin(config, "demo", ["one", "two"]);
+    const calls: BatchOptions[] = [];
+    const adapter = genAdapter(calls, () => ({
+      structured: { cases: [{ query: "plugin draft", skill: "demo:one", avoid: null }] }, costUsd: 0.01,
+    }));
+    const out = new Sink();
+    expect(await main(["gen", "--config-dir", config, "--plugin", "demo"],
+      { stdout: out, stderr: out, cwd: tmp }, { adapter })).toBe(0);
+    expect(calls[0]?.prompt).toContain("For demo:one:");
+    expect(calls[0]?.prompt).toContain("For demo:two:");
+    expect(calls[0]?.prompt).not.toContain("For other:");
+
+    const unknown = new Sink();
+    expect(await main(["gen", "--config-dir", config, "--plugin", "nope"],
+      { stdout: unknown, stderr: unknown, cwd: tmp }, { adapter: genAdapter([]) })).toBe(2);
+    expect(unknown.text).toContain("unknown plugin: nope (installed: demo)");
+
+    const commandOnly = path.join(tmp, "command-config");
+    mkdirSync(commandOnly, { recursive: true });
+    seedPlugin(commandOnly, "commands", [], ["help"]);
+    const noSkills = new Sink();
+    expect(await main(["gen", "--config-dir", commandOnly, "--plugin", "commands"],
+      { stdout: noSkills, stderr: noSkills, cwd: tmp }, { adapter: genAdapter([]) })).toBe(2);
+    expect(noSkills.text).toContain("plugin commands has no skills");
+
+    const conflict = new Sink();
+    expect(await main(["gen", "--config-dir", config, "--plugin", "demo", "--skill", "demo:one"],
+      { stdout: conflict, stderr: conflict, cwd: tmp }, { adapter: genAdapter([]) })).toBe(2);
+    expect(conflict.text).toContain("--plugin and --skill do not go together");
+  });
+
+  it("appends uncovered YAML skills, keeps comments, and checks the result", async () => {
+    const config = emptyConfig();
+    seedSkills(["alpha", "beta"]);
+    const file = writeCases("cases.yaml", "# keep this comment\nagent: claude\ncases:\n  - query: old\n    expect: [alpha]\n");
+    const calls: BatchOptions[] = [];
+    const out = new Sink();
+    const adapter = genAdapter(calls, () => ({
+      structured: { cases: [{ query: "new beta", skill: "beta", avoid: null }] }, costUsd: 0.02,
+    }));
+    const appendCode = await main(["gen", "--config-dir", config, "--append", file],
+      { stdout: out, stderr: out, cwd: tmp }, { adapter });
+    expect(appendCode).toBe(0);
+    expect(calls[0]?.prompt).toContain("For beta:");
+    expect(calls[0]?.prompt).not.toContain("For alpha:");
+    expect(readFileSync(file, "utf8")).toBe(
+      "# keep this comment\nagent: claude\ncases:\n  - query: old\n    expect: [alpha]\n" +
+      "  # gen draft (model: default): review these cases\n  - query: new beta\n    expect: [beta]\n",
+    );
+    const check = new Sink();
+    expect(await main(["check", file, "--no-name-check"], { stdout: check, stderr: check, cwd: tmp })).toBe(0);
+  });
+
+  it("appends JSON, skips duplicate queries, and leaves all-duplicate files byte-equal", async () => {
+    const config = emptyConfig();
+    seedSkills(["alpha", "beta"]);
+    const file = writeCases("cases.json", { cases: [{ query: "already", expect: ["alpha"] }] });
+    const before = readFileSync(file, "utf8");
+    const out = new Sink();
+    const adapter = genAdapter([], () => ({
+      structured: { cases: [
+        { query: " already ", skill: "beta", avoid: null },
+        { query: "fresh", skill: "beta", avoid: null },
+      ] }, costUsd: 0.03,
+    }));
+    expect(await main(["gen", "--config-dir", config, "--append", file, "--skill", "beta"],
+      { stdout: out, stderr: out, cwd: tmp }, { adapter })).toBe(0);
+    expect(out.text).toContain("appended 1 cases");
+    expect(out.text).toContain("1 duplicates skipped");
+    expect(JSON.parse(readFileSync(file, "utf8")).cases).toHaveLength(2);
+
+    const duplicateFile = writeCases("duplicates.json", { cases: [{ query: "same", expect: ["alpha"] }] });
+    const duplicateBefore = readFileSync(duplicateFile, "utf8");
+    const duplicateOut = new Sink();
+    const duplicateAdapter = genAdapter([], () => ({
+      structured: { cases: [{ query: " same ", skill: "beta", avoid: null }] }, costUsd: 0.01,
+    }));
+    expect(await main(["gen", "--config-dir", config, "--append", duplicateFile, "--skill", "beta"],
+      { stdout: duplicateOut, stderr: duplicateOut, cwd: tmp }, { adapter: duplicateAdapter })).toBe(0);
+    expect(readFileSync(duplicateFile, "utf8")).toBe(duplicateBefore);
+    expect(before).not.toBe("");
+  });
+
+  it("does not call the model for covered or missing append files", async () => {
+    const config = emptyConfig();
+    seedSkills(["alpha", "beta"]);
+    const file = writeCases("covered.yaml", "cases:\n  - query: old alpha\n    expect: [alpha]\n  - query: old beta\n    expect: [beta]\n");
+    const calls: BatchOptions[] = [];
+    const out = new Sink();
+    const coveredCode = await main(["gen", "--config-dir", config, "--append", file],
+      { stdout: out, stderr: out, cwd: tmp }, { adapter: genAdapter(calls) });
+    expect(coveredCode).toBe(0);
+    expect(out.text).toContain("nothing to draft");
+    expect(calls).toHaveLength(0);
+
+    const missing = new Sink();
+    expect(await main(["gen", "--config-dir", config, "--append", "missing.yaml"],
+      { stdout: missing, stderr: missing, cwd: tmp }, { adapter: genAdapter(calls) })).toBe(2);
+    expect(missing.text).toContain("cannot read");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects append with out and preserves the file when every group fails", async () => {
+    const config = emptyConfig();
+    seedSkills(["alpha", "beta"]);
+    const file = writeCases("failed.yaml", "cases:\n  - query: old\n    expect: [alpha]\n");
+    const before = readFileSync(file, "utf8");
+    const out = new Sink();
+    expect(await main(["gen", "--config-dir", config, "--append", file, "-o", "other.yaml"],
+      { stdout: out, stderr: out, cwd: tmp }, { adapter: genAdapter([]) })).toBe(2);
+    expect(out.text).toContain("--append and --out do not go together");
+    const failing = new Sink();
+    expect(await main(["gen", "--config-dir", config, "--append", file],
+      { stdout: failing, stderr: failing, cwd: tmp }, { adapter: genAdapter([], () => ({ structured: null, error: "failed", costUsd: null })) })).toBe(2);
+    expect(readFileSync(file, "utf8")).toBe(before);
   });
 });

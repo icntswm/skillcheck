@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
+import { isSeq, parse as parseYaml, parseDocument, type YAMLMap, type YAMLSeq } from "yaml";
 import { abortActiveRuns, ClaudeAdapter, DEFAULT_DIRECTIVE } from "./agents/claude.js";
 import type { AgentAdapter, RunResult, SkillList } from "./agents/types.js";
 import { BATCH_SCHEMA, buildBatchPrompt, parseBatchAnswer } from "./batch.js";
@@ -16,12 +17,13 @@ import {
   knownSkillNames,
   loadSuite,
   unknownNames,
+  parseSuite,
   type Case,
   type Suite,
 } from "./cases.js";
 import { confusion } from "./confusion.js";
 import { loadSkillDocs, type SkillDoc } from "./describe.js";
-import { GEN_SCHEMA, buildGenPrompt, genSuite, parseGenAnswer } from "./gen.js";
+import { GEN_SCHEMA, buildGenPrompt, caseEntry, genSuite, orderCases, parseGenAnswer, type GenCase } from "./gen.js";
 import { aggregate, judge, type CaseResult, type RunVerdict } from "./judge.js";
 import { evalSetToSuite, type ImportedSuite } from "./import.js";
 import { toJunit } from "./junit.js";
@@ -84,8 +86,10 @@ import options:
 
 gen options:
       --skill <a,b>      skills to draft (default: user/project skills)
+      --plugin <name>    skills of this installed plugin
       --per-skill <n>    positive requests per skill (default: 4)
   -o, --out <file>       write the cases there instead of stdout (--force overwrites)
+      --append <file>    add the draft to an existing cases file (default: skills it lacks)
   -m, -j, --timeout and --config-dir work as for run
 
 common:
@@ -130,6 +134,8 @@ const OPTIONS = {
   force: { type: "boolean", default: false },
   out: { type: "string", short: "o" },
   "per-skill": { type: "string" },
+  plugin: { type: "string" },
+  append: { type: "string" },
 } satisfies ParseArgsOptionsConfig;
 
 type Values = { [K in keyof typeof OPTIONS]: (typeof OPTIONS)[K]["type"] extends "boolean" ? boolean : string | undefined };
@@ -159,6 +165,8 @@ interface Flags {
   batch: boolean;
   batchSize: number;
   skill?: string;
+  plugin?: string;
+  append?: string;
   budget?: number;
   json?: string;
   junit?: string;
@@ -175,6 +183,8 @@ interface Flags {
 }
 
 function parseFlags(values: Values, cwd: string): Flags {
+  if (values.plugin !== undefined && values.skill !== undefined) throw new UsageError("--plugin and --skill do not go together");
+  if (values.append !== undefined && values.out !== undefined) throw new UsageError("--append and --out do not go together");
   if (values["batch-size"] !== undefined && !values.batch) throw new UsageError("--batch-size requires --batch");
   if (values.batch && (values.directive !== undefined || values["no-early-stop"])) {
     throw new UsageError("--directive and --no-early-stop do not apply to --batch");
@@ -198,6 +208,8 @@ function parseFlags(values: Values, cwd: string): Flags {
     batch: values.batch,
     batchSize: intFlag(values["batch-size"], "batch-size", 1) ?? 25,
     skill: values.skill,
+    plugin: values.plugin,
+    append: values.append,
     budget: numberFlag(values.budget),
     json: values.json,
     junit: values.junit,
@@ -505,12 +517,30 @@ function importCommand(positional: string | undefined, flags: Flags, io: Io): nu
 async function genCommand(flags: Flags, io: Io, deps: { adapter?: AgentAdapter }): Promise<number> {
   const docs = loadSkillDocs({ cwd: io.cwd, configDir: flags.configDir });
   const byName = new Map(docs.map((doc) => [doc.name, doc]));
+  const append = flags.append === undefined ? null : path.resolve(io.cwd, flags.append);
+  const existing = append === null ? null : await loadCases(append, io);
+  if (append !== null && existing === null) return 2;
   let targets: SkillDoc[];
   if (flags.skill !== undefined) {
     const names = flags.skill.split(",").map((name) => name.trim()).filter((name) => name !== "");
     const unknown = names.filter((name, i) => !byName.has(name) && names.indexOf(name) === i);
     if (unknown.length > 0) throw new UsageError(`unknown skill: ${unknown.join(", ")}`);
     targets = names.map((name) => byName.get(name) as SkillDoc).filter((doc, i, all) => all.findIndex((other) => other.name === doc.name) === i);
+  } else if (flags.plugin !== undefined) {
+    const pluginDocs = docs.filter((doc) => doc.plugin === flags.plugin);
+    if (pluginDocs.length === 0) {
+      const installed = [...new Set(docs.flatMap((doc) => doc.plugin === null ? [] : [doc.plugin]))].sort();
+      throw new UsageError(`unknown plugin: ${flags.plugin} (installed: ${installed.length > 0 ? installed.join(", ") : "none installed"})`);
+    }
+    targets = pluginDocs.filter((doc) => doc.kind === "skill");
+    if (targets.length === 0) throw new UsageError(`plugin ${flags.plugin} has no skills`);
+  } else if (append !== null && existing !== null) {
+    const covered = new Set(existing.cases.flatMap((item) => [...item.expect, ...item.expect_any, ...item.forbid]));
+    targets = docs.filter((doc) => doc.kind === "skill" && doc.plugin === null && !covered.has(doc.name));
+    if (targets.length === 0) {
+      io.stderr.write(`nothing to draft: every skill already has cases in ${flags.append} (pass --skill to draft more)\n`);
+      return 0;
+    }
   } else {
     targets = docs.filter((doc) => doc.kind === "skill" && doc.plugin === null);
   }
@@ -551,13 +581,17 @@ async function genCommand(flags: Flags, io: Io, deps: { adapter?: AgentAdapter }
   const cases = successful.flatMap((result) => result.cases);
   const dropped = successful.reduce((total, result) => total + result.dropped, 0);
   if (dropped > 0) io.stderr.write(`note: dropped ${dropped} proposed cases naming unknown skills\n`);
+  const cost = genCost(results.map((result) => result?.costUsd ?? null));
+  if (append !== null) {
+    const oldQueries = new Set(existing!.cases.map((item) => item.query.trim()));
+    const unique = cases.filter((item) => !oldQueries.has(item.query.trim()));
+    const duplicates = cases.length - unique.length;
+    if (unique.length > 0) appendCases(append, unique, targets.map((doc) => doc.name), flags.model ?? null);
+    const suffix = duplicates > 0 ? `, ${duplicates} duplicates skipped` : "";
+    io.stdout.write(`appended ${unique.length} cases to ${flags.append} (${targets.length} skills${suffix}, cost $${cost})\n`);
+    return 0;
+  }
   const text = genSuite(cases, { model: flags.model ?? null, skills: targets.map((doc) => doc.name) });
-  const costs = results.map((result) => result?.costUsd ?? null);
-  const known = costs.filter((cost): cost is number => cost !== null);
-  const unknown = costs.length - known.length;
-  // a call cut short by a timeout reports no cost but was still billed
-  const cost = known.length === 0 ? "?" : known.reduce((total, value) => total + value, 0).toFixed(2) +
-    (unknown > 0 ? ` + ${unknown} call${unknown === 1 ? "" : "s"} of unknown cost` : "");
   const counts = `${cases.length} cases for ${targets.length} skills, cost $${cost}`;
   if (out === null) {
     io.stdout.write(text);
@@ -571,6 +605,42 @@ async function genCommand(flags: Flags, io: Io, deps: { adapter?: AgentAdapter }
   }
   io.stdout.write(`wrote ${flags.out} (${counts})\n`);
   return 0;
+}
+
+function genCost(costs: (number | null)[]): string {
+  const known = costs.filter((cost): cost is number => cost !== null);
+  const unknown = costs.length - known.length;
+  return known.length === 0 ? "?" : known.reduce((total, value) => total + value, 0).toFixed(2) +
+    (unknown > 0 ? ` + ${unknown} call${unknown === 1 ? "" : "s"} of unknown cost` : "");
+}
+
+function appendCases(file: string, cases: GenCase[], skills: string[], model: string | null): void {
+  const ext = path.extname(file).toLowerCase();
+  const ordered = orderCases(cases, skills);
+  const text = fs.readFileSync(file, "utf8");
+  let nextText: string;
+  if (ext === ".json") {
+    const data = JSON.parse(text) as { cases?: unknown[] } | unknown[];
+    if (Array.isArray(data)) data.push(...ordered.map(caseEntry));
+    else (data.cases as unknown[]).push(...ordered.map(caseEntry));
+    nextText = JSON.stringify(data, null, 2) + "\n";
+  } else {
+    const doc = parseDocument(text);
+    const sequence = doc.get("cases", true) as YAMLSeq;
+    for (const [i, item] of ordered.entries()) {
+      const node = doc.createNode(caseEntry(item)) as YAMLMap;
+      // [name] like the rest of a cases file, not a block list
+      for (const key of ["expect", "forbid"]) {
+        const list = node.get(key, true);
+        if (isSeq(list)) list.flow = true;
+      }
+      if (i === 0) node.commentBefore = ` gen draft (model: ${model ?? "default"}): review these cases`;
+      sequence.add(node);
+    }
+    nextText = doc.toString({ flowCollectionPadding: false });
+  }
+  parseSuite(ext === ".json" ? JSON.parse(nextText) : parseYaml(nextText));
+  fs.writeFileSync(file, nextText);
 }
 
 const UNCOVERED_WIDTH = 78;

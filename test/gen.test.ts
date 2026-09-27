@@ -1,7 +1,7 @@
 import { parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 import { parseSuite } from "../src/cases.js";
-import { buildGenPrompt, genSuite, parseGenAnswer, type GenCase } from "../src/gen.js";
+import { buildGenPrompt, caseEntry, genSuite, orderCases, parseGenAnswer, type GenCase } from "../src/gen.js";
 import type { SkillDoc } from "../src/describe.js";
 
 function doc(name: string, description: string): SkillDoc {
@@ -9,6 +9,17 @@ function doc(name: string, description: string): SkillDoc {
 }
 
 describe("gen helpers", () => {
+  it("orders cases by target skills and maps them to suite entries", () => {
+    const cases: GenCase[] = [
+      { query: "avoid beta", skill: null, avoid: "beta" },
+      { query: "alpha", skill: "alpha", avoid: null },
+    ];
+    expect(orderCases(cases, ["alpha", "beta"])).toEqual([cases[1], cases[0]]);
+    expect(caseEntry(cases[1]!)).toEqual({ query: "alpha", expect: ["alpha"] });
+    expect(caseEntry(cases[0]!)).toEqual({ query: "avoid beta", forbid: ["beta"] });
+    expect(caseEntry({ query: "for beta", skill: "beta", avoid: "alpha" })).toEqual({ query: "for beta", expect: ["beta"], forbid: ["alpha"] });
+  });
+
   it("builds a prompt with all names, clipped descriptions, and counts", () => {
     const long = "word ".repeat(100);
     const prompt = buildGenPrompt(

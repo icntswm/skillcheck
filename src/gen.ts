@@ -28,6 +28,28 @@ export interface GenCase {
   avoid: string | null;
 }
 
+/** Order generated cases by their requested skills and convert one to a suite entry. */
+export function orderCases(cases: GenCase[], skills: string[]): GenCase[] {
+  const buckets = new Map(skills.map((skill) => [skill, [] as GenCase[]]));
+  const rest: GenCase[] = [];
+  for (const item of cases) {
+    const target = item.avoid ?? item.skill;
+    const bucket = target === null ? undefined : buckets.get(target);
+    if (bucket) bucket.push(item);
+    else rest.push(item);
+  }
+  return [...skills.flatMap((skill) => buckets.get(skill) ?? []), ...rest];
+}
+
+/** A near miss owned by a neighbour gets both: expect the neighbour, forbid the target. */
+export function caseEntry(item: GenCase): { query: string; expect?: string[]; forbid?: string[] } {
+  return {
+    query: item.query,
+    ...(item.skill !== null ? { expect: [item.skill] } : {}),
+    ...(item.avoid !== null ? { forbid: [item.avoid] } : {}),
+  };
+}
+
 /** Build the case-writing prompt from installed descriptions. */
 export function buildGenPrompt(targets: SkillDoc[], context: SkillDoc[], perSkill: number): string {
   const contextLines = context.map((doc) => `- ${doc.name}: ${JSON.stringify(doc.description.replace(/\s+/g, " ").slice(0, 300))}`);
@@ -74,15 +96,7 @@ export function parseGenAnswer(structured: unknown, known: Set<string>): { cases
 }
 
 export function genSuite(cases: GenCase[], meta: { model: string | null; skills: string[] }): string {
-  const buckets = new Map(meta.skills.map((skill) => [skill, [] as GenCase[]]));
-  const rest: GenCase[] = [];
-  for (const item of cases) {
-    const target = item.avoid ?? item.skill;
-    const bucket = target === null ? undefined : buckets.get(target);
-    if (bucket) bucket.push(item);
-    else rest.push(item);
-  }
-  const ordered = [...meta.skills.flatMap((skill) => buckets.get(skill) ?? []), ...rest];
+  const ordered = orderCases(cases, meta.skills);
   const lines = [
     `# Draft cases written by skillcheck gen (model: ${meta.model ?? "default"}) for: ${meta.skills.join(", ")}.`,
     "# Review every case: the model guessed what should route where. Delete what is wrong,",
