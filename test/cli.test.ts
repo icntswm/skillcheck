@@ -224,6 +224,8 @@ describe("cli run", () => {
     expect(out.text).toContain("--json <path>");
     expect(out.text).toContain("--junit <path>");
     expect(out.text).toContain("--markdown <path>");
+    expect(out.text).toContain("--baseline <path>");
+    expect(out.text).toContain("--only-new-failures");
     expect(out.text).toContain("skillcheck list");
     expect(out.text).toContain("skillcheck init");
     expect(out.text).toContain("--config-dir <dir>");
@@ -231,6 +233,69 @@ describe("cli run", () => {
     const out2 = new Sink();
     expect(await main([], { stdout: out2, stderr: out2, cwd: tmp })).toBe(2);
     expect(out2.text).toContain("Usage:");
+  });
+
+  it("compares JSON reports and only-new-failures counts regressions and new failures", async () => {
+    const oldFile = writeCases("old-cases.json", { cases: [
+      { query: "old failure", expect: ["find-bug"] },
+      { query: "fixed", expect: ["find-bug"] },
+      { query: "regressed", expect: ["find-bug"] },
+    ] });
+    const baselineFile = path.join(tmp, "baseline.json");
+    const first = new Sink();
+    expect(await main(["run", oldFile, "--model", "haiku", "--json", baselineFile], { stdout: first, stderr: first, cwd: tmp }, {
+      adapter: fakeAdapter({ "old failure": { loaded: [] }, fixed: { loaded: [] }, regressed: { loaded: ["find-bug"] } }),
+    })).toBe(1);
+
+    const currentFile = writeCases("current-cases.json", { cases: [
+      { query: "old failure", expect: ["find-bug"] },
+      { query: "fixed", expect: ["find-bug"] },
+      { query: "regressed", expect: ["find-bug"] },
+      { query: "brand new", expect: ["find-bug"] },
+    ] });
+    const out = new Sink();
+    const code = await main(["run", currentFile, "--model", "sonnet", "--baseline", baselineFile, "--only-new-failures"],
+      { stdout: out, stderr: out, cwd: tmp }, { adapter: fakeAdapter({
+        "old failure": { loaded: [] }, fixed: { loaded: ["find-bug"] }, regressed: { loaded: [] }, "brand new": { loaded: [] },
+      }) });
+    expect(code).toBe(1);
+    expect(out.text).toContain("vs baseline: 1 regressed (#3), 1 fixed (#2), 1 new");
+    expect(out.text).toContain("baseline was run with model haiku, this run with sonnet");
+    const report = JSON.parse(readFileSync(baselineFile, "utf8")) as { baseline: unknown };
+    expect(report.baseline).toBeNull();
+
+    const reportFile = path.join(tmp, "current.json");
+    const out2 = new Sink();
+    expect(await main(["run", currentFile, "--baseline", baselineFile, "--json", reportFile, "--only-new-failures"],
+      { stdout: out2, stderr: out2, cwd: tmp }, { adapter: fakeAdapter({
+        "old failure": { loaded: [] }, fixed: { loaded: ["find-bug"] }, regressed: { loaded: [] }, "brand new": { loaded: [] },
+      }) })).toBe(1);
+    const currentReport = JSON.parse(readFileSync(reportFile, "utf8")) as { baseline: unknown; cases: { change: unknown }[] };
+    expect(currentReport.baseline).toMatchObject({ regressed: 1, fixed: 1, new: 1, removed: 0, file: baselineFile });
+    expect(currentReport.cases.map((c) => c.change)).toEqual([null, "fixed", "regressed", "new"]);
+  });
+
+  it("returns zero for an old failure and one for a new failing case", async () => {
+    const cases = writeCases("cases.json", { cases: [{ query: "q", expect: ["find-bug"] }] });
+    const baselineFile = writeCases("baseline.json", { tool: "skillcheck", cases: [{ id: null, query: "q", status: "failed" }] });
+    const run = (answer: string[]) => main(["run", cases, "--baseline", baselineFile, "--only-new-failures"], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter: fakeAdapter({ q: { loaded: answer } }) });
+    expect(await run([])).toBe(0);
+    expect(await main(["run", cases, "--baseline", baselineFile, "--only-new-failures"], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter: fakeAdapter({ q: { loaded: ["find-bug"] } }) })).toBe(0);
+    const passedBaseline = writeCases("passed-baseline.json", { tool: "skillcheck", cases: [{ id: null, query: "q", status: "passed" }] });
+    expect(await main(["run", cases, "--baseline", passedBaseline, "--only-new-failures"], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter: fakeAdapter({ q: { loaded: [] } }) })).toBe(1);
+    const newBaseline = writeCases("empty-baseline.json", { tool: "skillcheck", cases: [] });
+    expect(await main(["run", cases, "--baseline", newBaseline, "--only-new-failures"], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter: fakeAdapter({ q: { loaded: [] } }) })).toBe(1);
+  });
+
+  it("fails before calling the agent for a bad baseline", async () => {
+    const file = writeCases("cases.json", SUITE);
+    const calls: RunOptions[] = [];
+    const out = new Sink();
+    expect(await main(["run", file, "--baseline", writeCases("bad.json", "nope")], { stdout: out, stderr: out, cwd: tmp }, { adapter: fakeAdapter({}, calls) })).toBe(2);
+    expect(out.text).toContain("cannot read baseline");
+    expect(calls).toHaveLength(0);
+    expect(await main(["run", file, "--only-new-failures"], { stdout: out, stderr: out, cwd: tmp }, { adapter: fakeAdapter({}, calls) })).toBe(2);
+    expect(out.text).toContain("--only-new-failures requires --baseline");
   });
 
   it("prints the package version", async () => {

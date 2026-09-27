@@ -27,6 +27,8 @@ to narrow the skill on the right, not to widen the one on the left.
 - `--markdown report.md` writes a short summary for a pull request comment or
   a job summary: a header with the counts, a table of the failed and skipped
   cases, the passed ones folded, and the confusion block.
+- `--baseline report.json` compares the run with an earlier JSON report.
+- `--only-new-failures` exits 1 only for regressed or new failing cases; it requires `--baseline`.
 
 ## Exit codes
 
@@ -87,6 +89,7 @@ jobs:
 | `batch` | `false` | one call per 25 cases |
 | `model`, `repeat`, `threshold` | suite values | overrides |
 | `budget` | `5` | spending cap in USD |
+| `baseline` | | path to an earlier `--json` report to compare with |
 | `junit` | `skillcheck.xml` | JUnit report path, empty disables it |
 | `args` | | extra arguments for `skillcheck run`, split on whitespace: quotes are not parsed, so a path with spaces does not fit |
 | `comment` | `true` | post the report as a pull request comment |
@@ -106,6 +109,46 @@ Outputs, for the steps after it:
 | `passed`, `failed`, `skipped` | case counts |
 | `cost` | spend in USD, with the estimate for runs that reported no cost |
 | `json`, `markdown` | paths to the reports |
+
+### Comparing with main
+
+The workflow on `push` to `main` can save a baseline from the action output:
+
+```yaml
+on:
+  push:
+    branches: [main]
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: skillcheck
+        uses: icntswm/skillcheck@v1
+      - if: always()
+        run: cp "${{ steps.skillcheck.outputs.json }}" skillcheck-baseline.json
+      - if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: skillcheck-baseline.json
+          key: skillcheck-baseline-${{ github.sha }}
+```
+
+The pull request workflow restores that cache and passes it to the action:
+
+```yaml
+- uses: actions/cache/restore@v4
+  with:
+    path: skillcheck-baseline.json
+    key: skillcheck-baseline-
+    restore-keys: skillcheck-baseline-
+- uses: icntswm/skillcheck@v1
+  with:
+    baseline: skillcheck-baseline.json
+    args: --only-new-failures
+```
+
+Caches of the default branch are visible to pull requests. With `--only-new-failures`, a known failure does not block unrelated PRs, but it still shows in the comment.
 
 A failing case fails the step, so a step that reads the outputs needs
 `if: always()`. `skillcheck.xml` still works with `actions/upload-artifact`

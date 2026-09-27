@@ -1,6 +1,7 @@
 import type { Case } from "./cases.js";
 import type { ConfusionPair } from "./confusion.js";
 import type { CaseResult } from "./judge.js";
+import type { BaselineSummary } from "./baseline.js";
 import { DIAGNOSIS_LIMIT } from "./judge.js";
 
 export type ReportStream = NodeJS.WritableStream & { isTTY?: boolean };
@@ -69,6 +70,7 @@ export class Reporter {
       estimatedUsd?: number;
       /** costs of runs made for cases the budget then skipped: spent all the same */
       skippedRunCosts?: (number | null)[];
+      baseline?: { summary: BaselineSummary; regressed: string[]; fixed: string[] };
     },
   ): void {
     const verdicts = results.flatMap((r) => r.runs);
@@ -97,6 +99,16 @@ export class Reporter {
     const skippedPart = skipped > 0 ? `, ${skipped} skipped` : "";
     const costs = [...verdicts.map((v) => v.costUsd), ...(extra?.skippedRunCosts ?? [])];
     this.write(`${failed} failed${skippedPart} of ${results.length + skipped} · runs ${costs.length} · ${costLine(costs, extra?.estimatedUsd)}\n`);
+    if (extra?.baseline) {
+      const b = extra.baseline;
+      const parts = [
+        b.summary.regressed > 0 ? this.paint("31", `${b.summary.regressed} regressed (${b.regressed.join(", ")})`) : null,
+        b.summary.fixed > 0 ? this.paint("32", `${b.summary.fixed} fixed (${b.fixed.join(", ")})`) : null,
+        b.summary.new > 0 ? `${b.summary.new} new` : null,
+        b.summary.removed > 0 ? `${b.summary.removed} removed` : null,
+      ].filter((p): p is string => p !== null);
+      this.write(`vs baseline: ${parts.length > 0 ? parts.join(", ") : "no changes"}\n`);
+    }
   }
 
   private paint(code: string, text: string): string {

@@ -22,6 +22,12 @@ export function toJunit(report: SuiteReport): string {
     properties.push(`      <property name="unknownCostRuns" value="${report.summary.unknownCostRuns}"/>`);
     properties.push(`      <property name="estimatedCostUsd" value="${report.summary.estimatedCostUsd.toFixed(2)}"/>`);
   }
+  if (report.baseline) {
+    properties.push(`      <property name="baselineRegressed" value="${report.baseline.regressed}"/>`);
+    properties.push(`      <property name="baselineFixed" value="${report.baseline.fixed}"/>`);
+    properties.push(`      <property name="baselineNew" value="${report.baseline.new}"/>`);
+    properties.push(`      <property name="baselineRemoved" value="${report.baseline.removed}"/>`);
+  }
   properties.push("    </properties>");
 
   const cases = rows.map(({ c, kind }) => testcase(c, kind, suiteName));

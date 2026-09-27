@@ -7,6 +7,7 @@ import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 import { abortActiveRuns, ClaudeAdapter, DEFAULT_DIRECTIVE } from "./agents/claude.js";
 import type { AgentAdapter, RunResult, SkillList } from "./agents/types.js";
 import { BATCH_SCHEMA, buildBatchPrompt, parseBatchAnswer } from "./batch.js";
+import { parseBaseline } from "./baseline.js";
 import { Budget } from "./budget.js";
 import {
   BUILTIN_SKILLS,
@@ -27,7 +28,7 @@ import { lint, LINT_DEFAULTS, type LintReport } from "./lint.js";
 import { toMarkdown } from "./markdown.js";
 import { runPool } from "./pool.js";
 import { oneLine, Reporter, type ReportStream } from "./report.js";
-import { buildReport } from "./results.js";
+import { buildReport, type SuiteReport } from "./results.js";
 import { readVersion } from "./version.js";
 
 const USAGE = `skillcheck — regression tests for agent skill routing
@@ -58,6 +59,8 @@ run options:
                          and the terminal report to stderr)
       --junit <path>     JUnit XML report (GitLab/GitHub test reporters) to path
       --markdown <path>  Markdown summary (PR comments, GitHub job summary) to path
+      --baseline <path>  earlier --json report: mark regressed, fixed and new cases
+      --only-new-failures  exit 1 only for regressed or new failing cases (needs --baseline)
 run/check options:
       --skill <a,b>      keep only cases that mention these skills
 check options:
@@ -109,6 +112,8 @@ const OPTIONS = {
   json: { type: "string" },
   junit: { type: "string" },
   markdown: { type: "string" },
+  baseline: { type: "string" },
+  "only-new-failures": { type: "boolean", default: false },
   top: { type: "string" },
   overlap: { type: "string" },
   strict: { type: "boolean", default: false },
@@ -148,6 +153,8 @@ interface Flags {
   json?: string;
   junit?: string;
   markdown?: string;
+  baseline?: string;
+  onlyNewFailures: boolean;
   top: number;
   overlap: number;
   strict: boolean;
@@ -160,6 +167,9 @@ function parseFlags(values: Values, cwd: string): Flags {
   if (values["batch-size"] !== undefined && !values.batch) throw new UsageError("--batch-size requires --batch");
   if (values.batch && (values.directive !== undefined || values["no-early-stop"])) {
     throw new UsageError("--directive and --no-early-stop do not apply to --batch");
+  }
+  if (values["only-new-failures"] && values.baseline === undefined) {
+    throw new UsageError("--only-new-failures requires --baseline");
   }
   return {
     help: values.help,
@@ -181,6 +191,8 @@ function parseFlags(values: Values, cwd: string): Flags {
     json: values.json,
     junit: values.junit,
     markdown: values.markdown,
+    baseline: values.baseline,
+    onlyNewFailures: values["only-new-failures"],
     top: intFlag(values.top, "top", 1) ?? 5,
     overlap: ratioFlag(values.overlap) ?? 0.3,
     strict: values.strict,
@@ -567,6 +579,15 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
   const suite = await loadCases(file, io);
   if (!suite) return 2;
 
+  let baseline: SuiteReport | undefined;
+  if (flags.baseline !== undefined) {
+    try {
+      baseline = parseBaseline(fs.readFileSync(path.resolve(io.cwd, flags.baseline), "utf8"));
+    } catch (e) {
+      throw new UsageError(`cannot read baseline ${flags.baseline}: ${(e as Error).message}`);
+    }
+  }
+
   const agent = flags.agent ?? suite.agent;
   const adapter = pickAdapter(agent, io, deps);
   if (!adapter) return 2;
@@ -612,23 +633,6 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
   const expected = expectedNames(selected);
   const unavailable = outcome.sawAvailability ? expected.filter((name) => !outcome.available.has(name)) : [];
   const pairs = confusion(ordered);
-  reporter.summary(ordered, {
-    unavailable,
-    confusion: pairs,
-    skipped: skipped.length,
-    budget: skipped.length > 0 ? { limitUsd: flags.budget!, spent: budget.spent, notStartedRuns } : undefined,
-    estimatedUsd: budget.spent,
-    skippedRunCosts,
-  });
-  if (flags.batch) {
-    // cases that only errored have no answer to confirm
-    const failed = ordered
-      .filter((r) => r.runs.some((v) => !v.ok && v.error === null))
-      .map((r) => String(r.case.id ?? r.case.index));
-    const hint = failed.length > 0 ? ` (--only ${failed.join(",")})` : "";
-    reporter.note(`batch mode: answers are the model's stated choice, not an actual Skill call — confirm failures with a normal run${hint}`);
-  }
-
   const report = buildReport({
     file,
     agent,
@@ -643,7 +647,37 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
     skippedRunCosts,
     budgetUsd: flags.budget ?? null,
     budgetReached: skipped.length > 0,
+    baseline,
+    baselineFile: flags.baseline,
   });
+  reporter.summary(ordered, {
+    unavailable,
+    confusion: pairs,
+    skipped: skipped.length,
+    budget: skipped.length > 0 ? { limitUsd: flags.budget!, spent: budget.spent, notStartedRuns } : undefined,
+    estimatedUsd: budget.spent,
+    skippedRunCosts,
+    baseline: report.baseline ? {
+      summary: report.baseline,
+      regressed: report.cases.filter((c) => c.change === "regressed").map((c) => `#${c.id ?? c.index}`),
+      fixed: report.cases.filter((c) => c.change === "fixed").map((c) => `#${c.id ?? c.index}`),
+    } : undefined,
+  });
+  if (flags.batch) {
+    // cases that only errored have no answer to confirm
+    const failed = ordered
+      .filter((r) => r.runs.some((v) => !v.ok && v.error === null))
+      .map((r) => String(r.case.id ?? r.case.index));
+    const hint = failed.length > 0 ? ` (--only ${failed.join(",")})` : "";
+    reporter.note(`batch mode: answers are the model's stated choice, not an actual Skill call — confirm failures with a normal run${hint}`);
+  }
+
+  if (baseline && baseline.model !== null && report.model !== null && baseline.model !== report.model) {
+    reporter.note(`baseline was run with model ${baseline.model}, this run with ${report.model}`);
+  }
+  if (baseline && baseline.batch !== report.batch) {
+    reporter.note(baseline.batch ? "baseline was a batch run, this one is not" : "this is a batch run, the baseline was not");
+  }
   if (flags.json !== undefined) {
     const payload = JSON.stringify(report, null, 2) + "\n";
     if (flags.json === "-") io.stdout.write(payload);
@@ -652,6 +686,9 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
   if (flags.junit !== undefined) writeReportFile(flags.junit, toJunit(report), "--junit");
   if (flags.markdown !== undefined) writeReportFile(flags.markdown, toMarkdown(report), "--markdown");
 
+  if (flags.onlyNewFailures) {
+    return report.cases.some((c) => c.status === "skipped" || (c.status === "failed" && (c.change === "regressed" || c.change === "new"))) ? 1 : 0;
+  }
   return ordered.some((r) => !r.ok) || skipped.length > 0 ? 1 : 0;
 }
 

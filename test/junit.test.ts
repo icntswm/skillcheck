@@ -64,6 +64,24 @@ describe("toJunit", () => {
     expect(xml.endsWith("</testsuite>\n</testsuites>\n")).toBe(true);
     expect(xml).not.toContain("unknownCostRuns");
     expect(xml).not.toContain("estimatedCostUsd");
+    expect(xml).not.toContain("baselineRegressed");
+  });
+
+  it("writes baseline properties only when comparing reports", () => {
+    const old = buildReport({
+      file: "old.json", agent: "claude", model: "sonnet", startedAtMs: 0, durationMs: 0,
+      cases: [done(c1, [verdict(c1, { loaded: [] })])], unavailable: [], confusion: [], estimatedCostUsd: 0, budgetUsd: null, budgetReached: false,
+    });
+    const report = buildReport({
+      file: "new.json", agent: "claude", model: "sonnet", startedAtMs: 0, durationMs: 0,
+      cases: [done(c1, [verdict(c1, { loaded: ["find-bug"] })])], unavailable: [], confusion: [], estimatedCostUsd: 0, budgetUsd: null, budgetReached: false,
+      baseline: old,
+    });
+    const xml = toJunit(report);
+    expect(xml).toContain('<property name="baselineRegressed" value="0"/>');
+    expect(xml).toContain('<property name="baselineFixed" value="1"/>');
+    expect(xml).toContain('<property name="baselineNew" value="0"/>');
+    expect(xml).toContain('<property name="baselineRemoved" value="0"/>');
   });
 
   it("marks runs without a reported cost next to costUsd", () => {

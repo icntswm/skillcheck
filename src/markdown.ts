@@ -9,6 +9,10 @@ export function toMarkdown(report: SuiteReport): string {
   const lines = [MARKDOWN_MARKER, header(report)];
   lines.push("");
   lines.push(metaLine(report));
+  if (report.baseline) {
+    lines.push("");
+    lines.push(`> Since baseline: ${baselineText(report.baseline)}`);
+  }
   if (report.batch) {
     lines.push("");
     lines.push("> Batch mode: answers are the model's stated choice, not an actual Skill call. Confirm failures with a normal run.");
@@ -103,6 +107,8 @@ function reasonCell(c: CaseReport): string {
   const bad = c.runs.filter((r) => !r.ok);
   const parts = c.runs.length > 1 ? [`${c.passed}/${c.runs.length}`, bad[0]?.reason ?? ""] : [bad[0]?.reason ?? ""];
   let text = parts.join(" · ");
+  if (c.change === "regressed") text = `**regressed** · ${text}`;
+  else if (c.change === "new") text = `new · ${text}`;
   const diagnosis = bad.find((r) => r.diagnosis !== null)?.diagnosis;
   if (diagnosis) text += ` — _${diagnosis}_`;
   if (c.note !== null) text += ` · note: ${c.note}`;
@@ -111,8 +117,18 @@ function reasonCell(c: CaseReport): string {
 
 function passedRow(c: CaseReport): string {
   const score = c.runs.length > 1 ? ` (${c.passed}/${c.runs.length})` : "";
-  const cells = [`${caseLabel(c)}${score}`, oneLine(c.query), loaded(c)];
+  const cells = [`${caseLabel(c)}${score}`, oneLine(c.query), `${loaded(c)}${c.change === "fixed" ? " · fixed" : ""}`];
   return `| ${cells.map(esc).join(" | ")} |`;
+}
+
+function baselineText(summary: NonNullable<SuiteReport["baseline"]>): string {
+  const parts = [
+    summary.regressed > 0 ? `**${summary.regressed} regressed**` : null,
+    summary.fixed > 0 ? `${summary.fixed} fixed` : null,
+    summary.new > 0 ? `${summary.new} new` : null,
+    summary.removed > 0 ? `${summary.removed} removed` : null,
+  ].filter((p): p is string => p !== null);
+  return parts.length > 0 ? `${parts.join(", ")}.` : "no changes.";
 }
 
 function caseLabel(c: CaseReport): string {

@@ -1,0 +1,63 @@
+import type { CaseReport, SuiteReport } from "./results.js";
+
+export type Change = "regressed" | "fixed" | "new";
+
+export interface BaselineSummary {
+  file: string;
+  regressed: number;
+  fixed: number;
+  new: number;
+  removed: number;
+}
+
+/** Parse a --json report. */
+export function parseBaseline(text: string): SuiteReport {
+  const value: unknown = JSON.parse(text);
+  if (value === null || typeof value !== "object" || (value as { tool?: unknown }).tool !== "skillcheck" || !Array.isArray((value as { cases?: unknown }).cases)) {
+    throw new Error("not a skillcheck --json report");
+  }
+  return value as SuiteReport;
+}
+
+/** Compare current cases with a previous report. */
+export function compare(
+  current: CaseReport[],
+  baseline: SuiteReport,
+  file: string,
+): { changes: (Change | null)[]; summary: BaselineSummary } {
+  const previous = new Map<string, CaseReport>();
+  for (const c of baseline.cases) {
+    const key = caseKey(c);
+    if (!previous.has(key)) previous.set(key, c);
+  }
+  const currentKeys = new Set<string>();
+  let regressed = 0;
+  let fixed = 0;
+  let newCount = 0;
+  const changes = current.map((c) => {
+    const key = caseKey(c);
+    currentKeys.add(key);
+    const old = previous.get(key);
+    if (old === undefined) {
+      newCount++;
+      return "new" as const;
+    }
+    if (old.status === "skipped" || c.status === "skipped") return null;
+    if (old.status === "passed" && c.status === "failed") {
+      regressed++;
+      return "regressed" as const;
+    }
+    if (old.status === "failed" && c.status === "passed") {
+      fixed++;
+      return "fixed" as const;
+    }
+    return null;
+  });
+  let removed = 0;
+  for (const key of previous.keys()) if (!currentKeys.has(key)) removed++;
+  return { changes, summary: { file, regressed, fixed, new: newCount, removed } };
+}
+
+function caseKey(c: Pick<CaseReport, "id" | "query">): string {
+  return c.id !== null ? `id:${c.id}` : `query:${c.query}`;
+}

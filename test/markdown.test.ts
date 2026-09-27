@@ -4,7 +4,7 @@ import type { Case } from "../src/cases.js";
 import type { ConfusionPair } from "../src/confusion.js";
 import { aggregate, judge, type RunVerdict } from "../src/judge.js";
 import { MARKDOWN_MARKER, toMarkdown } from "../src/markdown.js";
-import { buildReport, type ReportCase } from "../src/results.js";
+import { buildReport, type ReportCase, type SuiteReport } from "../src/results.js";
 
 function kase(over: Partial<Case> = {}): Case {
   return { index: 1, query: "why does it fail", expect: ["find-bug"], expect_any: [], forbid: [], none: false, ...over };
@@ -31,17 +31,18 @@ interface Over {
   unavailable?: string[];
   confusion?: ConfusionPair[];
   durationMs?: number;
+  baseline?: SuiteReport | null;
 }
 
 function makeReport(cases: ReportCase[], over: Over = {}): string {
   const {
-    model = "sonnet", batch = false, estimatedCostUsd = 0,
+    model = "sonnet", batch = false, estimatedCostUsd = 0, baseline = null,
     budgetUsd = null, budgetReached = false, unavailable = [], confusion = [], durationMs = 12_345,
   } = over;
   return toMarkdown(buildReport({
     file: "skillcheck.yaml", agent: "claude", model, batch,
     startedAtMs: Date.parse("2026-09-27T10:00:00Z"), durationMs,
-    cases, unavailable, confusion, estimatedCostUsd, budgetUsd, budgetReached,
+    cases, unavailable, confusion, estimatedCostUsd, budgetUsd, budgetReached, baseline,
   }));
 }
 
@@ -78,6 +79,45 @@ describe("toMarkdown", () => {
     expect(md).not.toContain("Reason |");
     expect(md).not.toContain("❌");
     expect(md.endsWith("</details>\n")).toBe(true);
+  });
+
+  it("renders baseline counts and change labels", () => {
+    const c2 = kase({ index: 2, query: "fixed case" });
+    const c3 = kase({ index: 3, query: "new case" });
+    const c4 = kase({ index: 4, query: "removed case" });
+    const old = buildReport({
+      file: "old.json", agent: "claude", model: "sonnet", startedAtMs: 0, durationMs: 0,
+      cases: [
+        done(c1, [verdict(c1, { loaded: ["find-bug"] })]),
+        done(c2, [verdict(c2, { loaded: [] })]),
+        done(c4, [verdict(c4, { loaded: ["find-bug"] })]),
+      ], unavailable: [], confusion: [], estimatedCostUsd: 0, budgetUsd: null, budgetReached: false,
+    });
+    const fixed = buildReport({
+      file: "skillcheck.yaml", agent: "claude", model: "sonnet", startedAtMs: 0, durationMs: 0,
+      cases: [
+        done(c1, [verdict(c1, { loaded: [] })]),
+        done(c2, [verdict(c2, { loaded: ["find-bug"] })]),
+        done(c3, [verdict(c3, { loaded: ["find-bug"] })]),
+      ], unavailable: [], confusion: [], estimatedCostUsd: 0, budgetUsd: null, budgetReached: false,
+      baseline: old, baselineFile: "old.json",
+    });
+    expect(toMarkdown(fixed)).toContain("> Since baseline: **1 regressed**, 1 fixed, 1 new, 1 removed.");
+    expect(toMarkdown(fixed)).toContain("**regressed** · not loaded find-bug");
+    const passedOld = buildReport({
+      file: "old.json", agent: "claude", model: "sonnet", startedAtMs: 0, durationMs: 0,
+      cases: [done(c1, [verdict(c1, { loaded: [] })])], unavailable: [], confusion: [], estimatedCostUsd: 0, budgetUsd: null, budgetReached: false,
+    });
+    const passed = buildReport({
+      file: "skillcheck.yaml", agent: "claude", model: "sonnet", startedAtMs: 0, durationMs: 0,
+      cases: [done(c1, [verdict(c1, { loaded: ["find-bug"] })])], unavailable: [], confusion: [], estimatedCostUsd: 0, budgetUsd: null, budgetReached: false,
+      baseline: passedOld,
+    });
+    expect(toMarkdown(passed)).toContain("find-bug · fixed");
+  });
+
+  it("does not add baseline text without a baseline", () => {
+    expect(makeReport([done(c1, [verdict(c1, { loaded: ["find-bug"] })])])).not.toContain("baseline");
   });
 
   it("failed, errored and skipped rows get their marks and reasons", () => {

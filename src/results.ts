@@ -1,6 +1,7 @@
 import type { Case } from "./cases.js";
 import type { ConfusionPair } from "./confusion.js";
 import type { CaseResult, RunVerdict } from "./judge.js";
+import { compare, type BaselineSummary, type Change } from "./baseline.js";
 import { readVersion } from "./version.js";
 
 export interface SuiteReport {
@@ -32,6 +33,7 @@ export interface SuiteReport {
   confusion: ConfusionPair[];
   /** file order, includes skipped cases */
   cases: CaseReport[];
+  baseline: BaselineSummary | null;
 }
 
 export interface CaseReport {
@@ -49,6 +51,7 @@ export interface CaseReport {
   threshold: number;
   /** [] for skipped cases */
   runs: RunVerdict[];
+  change: Change | null;
 }
 
 /** A planned case with its result; result === null means the budget skipped it. */
@@ -77,6 +80,8 @@ export interface ReportInput {
   skippedRunCosts?: (number | null)[];
   budgetUsd: number | null;
   budgetReached: boolean;
+  baseline?: SuiteReport | null;
+  baselineFile?: string;
 }
 
 /** The single source of truth for --json and --junit; computed once per run. */
@@ -84,6 +89,8 @@ export function buildReport(input: ReportInput): SuiteReport {
   const verdicts = input.cases.flatMap((e) => e.result?.runs ?? []);
   const costs = [...verdicts.map((v) => v.costUsd), ...(input.skippedRunCosts ?? [])];
   const known = costs.filter((c): c is number => c !== null);
+  const cases = input.cases.map(toCaseReport);
+  const comparison = input.baseline ? compare(cases, input.baseline, input.baselineFile ?? input.baseline.file) : null;
   return {
     tool: "skillcheck",
     version: readVersion(),
@@ -107,7 +114,8 @@ export function buildReport(input: ReportInput): SuiteReport {
     },
     unavailable: input.unavailable,
     confusion: input.confusion,
-    cases: input.cases.map(toCaseReport),
+    cases: comparison ? cases.map((c, i) => ({ ...c, change: comparison.changes[i] ?? null })) : cases,
+    baseline: comparison?.summary ?? null,
   };
 }
 
@@ -127,5 +135,6 @@ function toCaseReport(e: ReportCase): CaseReport {
     passed: e.result?.passed ?? 0,
     threshold: e.result?.threshold ?? e.threshold,
     runs: e.result?.runs ?? [],
+    change: null,
   };
 }

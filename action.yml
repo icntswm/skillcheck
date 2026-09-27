@@ -36,6 +36,9 @@ inputs:
   budget:
     description: Stop starting new runs once the spend estimate reaches this many USD.
     default: "5"
+  baseline:
+    description: Path to an earlier --json report to compare with; skipped when the file does not exist.
+    default: ""
   junit:
     description: Path for the JUnit XML report. Empty disables it.
     default: skillcheck.xml
@@ -118,6 +121,7 @@ runs:
         REPEAT: ${{ inputs.repeat }}
         THRESHOLD: ${{ inputs.threshold }}
         BUDGET: ${{ inputs.budget }}
+        BASELINE: ${{ inputs.baseline }}
         JUNIT: ${{ inputs.junit }}
         EXTRA: ${{ inputs.args }}
       run: |
@@ -133,6 +137,13 @@ runs:
         # a pinned version older than 1.1.0 has no Markdown report
         # grep reads it all: with -q it would exit early and fail the pipe under pipefail
         if skillcheck --help | grep -- --markdown > /dev/null; then args+=(--markdown "$RUNNER_TEMP/skillcheck.md"); fi
+        if [ -n "$BASELINE" ]; then
+          if [ -f "$BASELINE" ]; then
+            if skillcheck --help | grep -- --baseline > /dev/null; then args+=(--baseline "$BASELINE"); fi
+          else
+            echo "::notice::no baseline at $BASELINE, running without"
+          fi
+        fi
         read -ra extra <<< "$EXTRA"
         skillcheck "${args[@]}" "${extra[@]}"
 
