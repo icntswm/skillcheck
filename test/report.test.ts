@@ -130,6 +130,16 @@ describe("Reporter", () => {
     expect(text()).toBe("\n0 failed of 1 · runs 2 · cost $0.05 (+? for 1 runs)\n");
   });
 
+  it("shows the token estimate when it prices the unknown costs", () => {
+    const runs = [verdict({ costUsd: 0.05 }), verdict({ costUsd: null })];
+    const priced = makeSink();
+    new Reporter(priced.stream).summary([result({ runs })], { estimatedUsd: 0.12 });
+    expect(priced.text()).toBe("\n0 failed of 1 · runs 2 · cost ~$0.12 (1 runs estimated from tokens)\n");
+    const unpriced = makeSink(); // nothing to estimate from: keep the known sum
+    new Reporter(unpriced.stream).summary([result({ runs })], { estimatedUsd: 0.05 });
+    expect(unpriced.text()).toBe("\n0 failed of 1 · runs 2 · cost $0.05 (+? for 1 runs)\n");
+  });
+
   it("prints cost ? when no cost is known and warns about diagnoses and missing skills", () => {
     const { text, stream } = makeSink();
     new Reporter(stream).summary(

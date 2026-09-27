@@ -3,7 +3,7 @@ import { rmSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentAdapter, BatchOptions, BatchResult, RunOptions, RunResult, SkillList } from "./types.js";
+import type { AgentAdapter, BatchOptions, BatchResult, RunOptions, RunResult, SkillList, TokenUsage } from "./types.js";
 
 export const DEFAULT_DIRECTIVE =
   // "Decide which skill fits" made sonnet answer with the name as text instead
@@ -18,6 +18,25 @@ function stringList(v: unknown): string[] | null {
   return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : null;
 }
 
+function count(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+/** Sum API `usage` objects; cache writes without a 1h/5m split count as 5m. */
+function sumUsage(model: string | null, usages: Json[]): TokenUsage {
+  const total: TokenUsage = { model, input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 };
+  for (const u of usages) {
+    const split = u.cache_creation as Json | undefined;
+    const write1h = count(split?.ephemeral_1h_input_tokens);
+    total.input += count(u.input_tokens);
+    total.output += count(u.output_tokens);
+    total.cacheRead += count(u.cache_read_input_tokens);
+    total.cacheWrite1h += write1h;
+    total.cacheWrite5m += Math.max(0, count(u.cache_creation_input_tokens) - write1h);
+  }
+  return total;
+}
+
 /**
  * Incremental parser of claude's stream-json stdout. One event per line.
  * Pushing lines also computes the early-stop signal, so the adapter can
@@ -29,6 +48,10 @@ export class ClaudeStream {
   private resultText = "";
   private sawResult = false;
   private costUsd: number | null = null;
+  private model: string | null = null;
+  /** latest usage per API message; a message streams as several events */
+  private messageUsage = new Map<string, Json>();
+  private resultUsage: Json | null = null;
   private availableSkills: string[] | null = null;
   private initSkillList: string[] | null = null;
   private initSlashList: string[] | null = null;
@@ -96,6 +119,7 @@ export class ClaudeStream {
         this.failure = `claude error: ${this.resultText.trim().slice(0, 120) || String(ev.subtype)}`;
       }
       if (typeof ev.total_cost_usd === "number") this.costUsd = ev.total_cost_usd;
+      if (typeof ev.usage === "object" && ev.usage !== null) this.resultUsage = ev.usage as Json;
       return true;
     }
     return false;
@@ -103,6 +127,11 @@ export class ClaudeStream {
 
   private handleAssistant(ev: Json): boolean {
     const message = ev.message as Json | undefined;
+    if (typeof message?.model === "string") this.model = message.model;
+    if (typeof message?.usage === "object" && message.usage !== null) {
+      const id = typeof message.id === "string" ? message.id : `#${this.messageUsage.size}`;
+      this.messageUsage.set(id, message.usage as Json);
+    }
     const blocks = message?.content;
     if (!Array.isArray(blocks)) return false;
     let sawSkillHere = false;
@@ -121,6 +150,17 @@ export class ClaudeStream {
     }
     if (sawSkillHere) this.sawSkill = true;
     return sawSkillHere;
+  }
+
+  /**
+   * Billed tokens: the result event's total, or the sum over assistant
+   * messages when the run was killed first. Streamed output counts are
+   * partial, so the latter runs a little low.
+   */
+  get usage(): TokenUsage | null {
+    if (this.resultUsage) return sumUsage(this.model, [this.resultUsage]);
+    if (this.messageUsage.size === 0) return null;
+    return sumUsage(this.model, [...this.messageUsage.values()]);
   }
 
   /** Error reported by claude itself in the result event, null if none. */
@@ -291,7 +331,8 @@ export class ClaudeAdapter implements AgentAdapter {
       });
       const { loaded, text, costUsd, availableSkills } = out.stream.result;
       const error = withLoginHint(out.error, opts.configDir);
-      return { loaded, text, costUsd, availableSkills, error, stoppedEarly: out.stoppedEarly, durationMs: out.durationMs };
+      const usage = out.stream.usage;
+      return { loaded, text, costUsd, usage, availableSkills, error, stoppedEarly: out.stoppedEarly, durationMs: out.durationMs };
     } finally {
       await rm(workdir, { recursive: true, force: true });
     }

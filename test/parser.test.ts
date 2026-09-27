@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { ClaudeStream, DEFAULT_DIRECTIVE, parseClaudeStream } from "../src/agents/claude.js";
+import { inputEquivalent } from "../src/budget.js";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -206,5 +207,34 @@ describe("ClaudeStream init", () => {
   it("init event alone does not signal a stop", () => {
     const stream = new ClaudeStream();
     expect(stream.push('{"type":"system","subtype":"init","skills":["a"]}')).toBe(false);
+  });
+
+  it("usage of a finished run comes from the result event and prices like total_cost_usd", () => {
+    for (const name of ["claude-skill.jsonl", "claude-none.jsonl"]) {
+      const stream = new ClaudeStream();
+      let cost = 0;
+      for (const line of fixtureLines(name)) {
+        stream.push(line);
+        if (line.includes('"type":"result"')) cost = (JSON.parse(line) as { total_cost_usd: number }).total_cost_usd;
+      }
+      // claude-sonnet-5 input is $2/M; the fixed ratios reproduce the real bill
+      expect(inputEquivalent(stream.usage!) * 2e-6).toBeCloseTo(cost, 6);
+    }
+  });
+
+  it("usage of a killed run sums assistant messages, each message once", () => {
+    const stream = new ClaudeStream();
+    for (const line of fixtureLines("claude-skill.jsonl")) {
+      if (line.includes('"type":"result"')) break;
+      stream.push(line);
+    }
+    expect(stream.finished).toBe(false);
+    expect(stream.usage).toEqual({
+      model: "claude-sonnet-5", input: 6, output: 9, cacheRead: 68875, cacheWrite5m: 0, cacheWrite1h: 35254,
+    });
+  });
+
+  it("no assistant usage means no usage", () => {
+    expect(new ClaudeStream().usage).toBeNull();
   });
 });

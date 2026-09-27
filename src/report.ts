@@ -64,6 +64,8 @@ export class Reporter {
       confusion?: ConfusionPair[];
       skipped?: number;
       budget?: { limitUsd: number; spent: number; notStartedRuns: number };
+      /** spend with runs that reported no cost estimated from tokens */
+      estimatedUsd?: number;
     },
   ): void {
     const verdicts = results.flatMap((r) => r.runs);
@@ -90,7 +92,7 @@ export class Reporter {
     const failed = results.filter((r) => !r.ok).length;
     const skipped = extra?.skipped ?? 0;
     const skippedPart = skipped > 0 ? `, ${skipped} skipped` : "";
-    this.write(`${failed} failed${skippedPart} of ${results.length + skipped} · runs ${verdicts.length} · ${costLine(verdicts.map((v) => v.costUsd))}\n`);
+    this.write(`${failed} failed${skippedPart} of ${results.length + skipped} · runs ${verdicts.length} · ${costLine(verdicts.map((v) => v.costUsd), extra?.estimatedUsd)}\n`);
   }
 
   private paint(code: string, text: string): string {
@@ -102,11 +104,14 @@ export class Reporter {
   }
 }
 
-function costLine(costs: (number | null)[]): string {
+function costLine(costs: (number | null)[], estimated?: number): string {
   const known = costs.filter((c): c is number => c !== null);
-  if (known.length === 0) return "cost ?";
   const sum = known.reduce((a, b) => a + b, 0);
   const unknown = costs.length - known.length;
+  if (unknown > 0 && estimated !== undefined && estimated > sum) {
+    return `cost ~$${estimated.toFixed(2)} (${unknown} runs estimated from tokens)`;
+  }
+  if (known.length === 0) return "cost ?";
   const tail = unknown > 0 ? ` (+? for ${unknown} runs)` : "";
   return `cost $${sum.toFixed(2)}${tail}`;
 }

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { TokenUsage } from "../src/agents/types.js";
 import { Budget } from "../src/budget.js";
+
+function tokens(input: number, model: string | null = "claude-sonnet-5"): TokenUsage {
+  return { model, input, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 };
+}
 
 describe("Budget", () => {
   it("sums known costs and ignores unknowns until an average exists", () => {
@@ -47,5 +52,30 @@ describe("Budget", () => {
     const b = new Budget(0.001);
     expect(b.exceeded).toBe(false);
     expect(b.spent).toBe(0);
+  });
+
+  it("prices killed runs by tokens at the rate of finished runs", () => {
+    const b = new Budget(10);
+    b.add(0.02, tokens(10_000)); // $2 per million input tokens
+    b.add(null, tokens(50_000));
+    expect(b.spent).toBeCloseTo(0.12, 10); // 0.02 + 50k × $2/M
+  });
+
+  it("uses list price before any run finishes, so early stops alone can trip it", () => {
+    const b = new Budget(0.3);
+    b.add(null, tokens(50_000)); // sonnet $3/M → 0.15
+    expect(b.exceeded).toBe(false);
+    b.add(null, tokens(50_000));
+    expect(b.exceeded).toBe(true);
+    expect(new Budget(1).spent).toBe(0);
+    const unknown = new Budget(10);
+    unknown.add(null, tokens(100_000, null)); // unknown model priced high: $5/M
+    expect(unknown.spent).toBeCloseTo(0.5, 10);
+  });
+
+  it("counts output and cache tokens at their price ratios", () => {
+    const b = new Budget(10);
+    b.add(null, { model: "claude-haiku-4-5", input: 0, output: 1000, cacheRead: 10_000, cacheWrite5m: 800, cacheWrite1h: 500 });
+    expect(b.spent).toBeCloseTo((5000 + 1000 + 1000 + 1000) * 1e-6, 10);
   });
 });

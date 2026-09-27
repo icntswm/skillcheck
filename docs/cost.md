@@ -28,8 +28,11 @@ answering, so you pay for the routing decision and not for the work.
 - **Run only what you touched.** `--skill a,b` keeps the cases that mention
   those skills.
 - **Set a budget.** `--budget 2` stops starting new runs once the spend
-  estimate reaches $2. Runs stopped early report no cost, so the estimate is a
-  lower bound; the report says how many runs had no cost.
+  estimate reaches $2. Runs stopped early report no cost, so skillcheck prices
+  them from the tokens they used, at the rate of the runs that finished (or at
+  list price before any has). The report's cost line then starts with `~`,
+  and `--json` keeps the exact part in `costUsd` and the estimate in
+  `estimatedCostUsd`.
 - **Keep `repeat: 1` while iterating.** `--repeat 3` makes a result stable and
   triples the price. Use it in CI or when a case looks flaky.
 - **Fewer installed skills make every call cheaper.** In CI, point

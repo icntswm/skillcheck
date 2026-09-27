@@ -503,8 +503,8 @@ class FatalStop {
   note(error: string | null): void {
     if (this.message === null && error !== null && FATAL_ERROR.test(error)) this.message = error;
   }
-  canStart(budget: Budget | null): boolean {
-    return this.message === null && (!budget || !budget.exceeded);
+  canStart(budget: Budget): boolean {
+    return this.message === null && !budget.exceeded;
   }
 }
 
@@ -532,7 +532,8 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
     return { c, jobIndex: i, threshold: c.threshold ?? threshold, runs: Array.from<RunVerdict | undefined>({ length: n }), done: 0 };
   });
 
-  const budget = flags.budget !== undefined ? new Budget(flags.budget) : null;
+  // without --budget it only estimates the spend for the report
+  const budget = new Budget(flags.budget ?? Infinity);
   // "--json -" owns stdout, so the human report has to go to stderr
   const reporter = new Reporter(flags.json === "-" ? (io.stderr as ReportStream) : io.stdout);
   const startedAtMs = Date.now();
@@ -559,7 +560,8 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
     unavailable,
     confusion: pairs,
     skipped: skipped.length,
-    budget: skipped.length > 0 && budget ? { limitUsd: flags.budget!, spent: budget.spent, notStartedRuns } : undefined,
+    budget: skipped.length > 0 ? { limitUsd: flags.budget!, spent: budget.spent, notStartedRuns } : undefined,
+    estimatedUsd: budget.spent,
   });
   if (flags.batch) {
     // cases that only errored have no answer to confirm
@@ -579,6 +581,7 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
     cases: items.map((item) => ({ c: item.c, threshold: item.threshold, result: outcome.results[item.jobIndex] ?? null })),
     unavailable,
     confusion: pairs,
+    estimatedCostUsd: budget.spent,
     budgetUsd: flags.budget ?? null,
     budgetReached: skipped.length > 0,
   });
@@ -609,7 +612,7 @@ async function runIndividually(
   directive: string,
   repeat: number,
   reporter: Reporter,
-  budget: Budget | null,
+  budget: Budget,
   fatal: FatalStop,
 ): Promise<RunOutcome> {
   const totalRuns = items.reduce((n, item) => n + item.runs.length, 0);
@@ -639,7 +642,7 @@ async function runIndividually(
       for (const name of r.availableSkills) available.add(name);
     }
     const verdict = judge(job.item.c, r);
-    budget?.add(verdict.costUsd);
+    budget.add(r.costUsd, r.usage);
     job.item.runs[job.runIndex] = verdict;
     job.item.done++;
     if (job.item.done === job.item.runs.length) {
@@ -662,7 +665,7 @@ async function runBatched(
   model: string | undefined,
   repeat: number,
   reporter: Reporter,
-  budget: Budget | null,
+  budget: Budget,
   fatal: FatalStop,
 ): Promise<RunOutcome> {
   const chunks: PlanItem[][] = [];
@@ -696,7 +699,7 @@ async function runBatched(
         durationMs: br.durationMs,
       };
       const verdict = judge(item.c, r);
-      budget?.add(verdict.costUsd);
+      budget.add(verdict.costUsd);
       item.runs[job.round] = verdict;
       item.done++;
       if (item.done === item.runs.length) {

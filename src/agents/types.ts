@@ -8,6 +8,16 @@ export interface RunOptions {
   configDir?: string;
 }
 
+/** Billed tokens of one run, as the API reports them. */
+export interface TokenUsage {
+  model: string | null;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite5m: number;
+  cacheWrite1h: number;
+}
+
 export interface RunResult {
   /** Skill names, first-seen order, deduped, leading "/" stripped */
   loaded: string[];
@@ -15,6 +25,8 @@ export interface RunResult {
   text: string;
   /** total_cost_usd from result event, null if absent */
   costUsd: number | null;
+  /** tokens billed so far; lets --budget price runs killed before costUsd arrives */
+  usage?: TokenUsage | null;
   /** from system/init event `skills`, null if absent */
   availableSkills: string[] | null;
   /** run failure, null otherwise */

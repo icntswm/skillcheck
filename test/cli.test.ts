@@ -545,6 +545,21 @@ describe("cli --budget", () => {
     expect(out.text).toContain("0 failed, 1 skipped of 4 · runs 3 · cost $0.15");
   });
 
+  it("trips on early-stopped runs that report tokens but no cost", async () => {
+    const file = writeCases("cases.json", {
+      cases: Array.from({ length: 4 }, () => ({ query: "why does it fail", expect: ["find-bug"] })),
+    });
+    const calls: RunOptions[] = [];
+    const usage = { model: "claude-sonnet-5", input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 25_000 };
+    const adapter = fakeAdapter({ "why does it fail": { loaded: ["find-bug"], costUsd: null, usage } }, calls); // ~$0.15 a run at list price
+    const out = new Sink();
+    const code = await main(["run", file, "-j", "1", "--budget", "0.3"], { stdout: out, stderr: out, cwd: tmp }, { adapter });
+    expect(code).toBe(1);
+    expect(calls).toHaveLength(2);
+    expect(out.text).toContain("budget $0.30 reached (spent ~$0.30), 2 runs not started");
+    expect(out.text).toContain("runs 2 · cost ~$0.30 (2 runs estimated from tokens)");
+  });
+
   it("a case whose runs did not all start is skipped whole, not aggregated", async () => {
     const file = writeCases("cases.json", { cases: [
       { query: "why does it fail", expect: ["find-bug"], repeat: 3 },
@@ -588,7 +603,7 @@ describe("cli --json and --junit", () => {
       file,
       agent: "claude",
       model: null,
-      summary: { cases: 2, failed: 0, skipped: 0, runs: 2, budgetUsd: null, budgetReached: false },
+      summary: { cases: 2, failed: 0, skipped: 0, runs: 2, costUsd: 0.1, estimatedCostUsd: 0.1, budgetUsd: null, budgetReached: false },
     });
     expect(report.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(report.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);

@@ -19,6 +19,8 @@ export interface SuiteReport {
     runs: number;
     costUsd: number;
     unknownCostRuns: number;
+    /** costUsd plus an estimate for the unknown-cost runs */
+    estimatedCostUsd: number;
     diagnoses: number;
     budgetUsd: number | null;
     budgetReached: boolean;
@@ -64,6 +66,8 @@ export interface ReportInput {
   cases: ReportCase[];
   unavailable: string[];
   confusion: ConfusionPair[];
+  /** known costs plus runs priced from their tokens */
+  estimatedCostUsd: number;
   budgetUsd: number | null;
   budgetReached: boolean;
 }
@@ -88,6 +92,7 @@ export function buildReport(input: ReportInput): SuiteReport {
       runs: verdicts.length,
       costUsd: known.reduce((a, b) => a + b, 0),
       unknownCostRuns: costs.length - known.length,
+      estimatedCostUsd: input.estimatedCostUsd,
       diagnoses: verdicts.filter((v) => v.diagnosis).length,
       budgetUsd: input.budgetUsd,
       budgetReached: input.budgetReached,

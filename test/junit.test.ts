@@ -29,7 +29,7 @@ function makeReport(cases: ReportCase[], model: string | null = "sonnet"): strin
   return toJunit(buildReport({
     file: "skillcheck.yaml", agent: "claude", model,
     startedAtMs: Date.parse("2026-09-27T10:00:00Z"), durationMs: 12345,
-    cases, unavailable: [], confusion: [], budgetUsd: null, budgetReached: false,
+    cases, unavailable: [], confusion: [], estimatedCostUsd: 0, budgetUsd: null, budgetReached: false,
   }));
 }
 
