@@ -3,7 +3,6 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![npm](https://img.shields.io/npm/v/@icntswm/skillcheck.svg)](https://www.npmjs.com/package/@icntswm/skillcheck)
 ![Node 20+](https://img.shields.io/badge/node-20%2B-339933.svg)
-![Claude Code](https://img.shields.io/badge/works%20with-Claude%20Code-d97757.svg)
 
 **Regression tests for Claude Code skills.**
 
