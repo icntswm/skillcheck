@@ -1,4 +1,4 @@
-name: skillcheck
+name: Skill routing tests for Claude Code
 description: Regression tests for Claude Code skills. Checks that every request still loads the right skill.
 branding:
   icon: check-circle
