@@ -33,7 +33,8 @@ export function evalSetToSuite(data: unknown, skill: string, source: string): Im
   });
   if (errors.length > 0) throw new ConfigError(errors);
 
-  const name = PLAIN_NAME.test(skill) ? skill : JSON.stringify(skill);
+  // plain only when YAML reads it back as the same string: not true, null, 123
+  const name = PLAIN_NAME.test(skill) && parseYaml(skill) === skill ? skill : JSON.stringify(skill);
   const lines = [
     `# skillcheck cases imported from ${path.basename(source)} (skill-creator trigger eval set).`,
     "# should_trigger: true became expect, false became forbid: another skill may",

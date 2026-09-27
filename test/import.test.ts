@@ -46,6 +46,12 @@ describe("evalSetToSuite", () => {
     expect(parseSuite(parseYaml(text)).cases[0]?.forbid).toEqual(["my skill"]);
   });
 
+  it.each(["true", "null", "123", "1.5", "~"])("quotes %s, which YAML would not read as a string", (skill) => {
+    const { text } = evalSetToSuite([{ query: "q", should_trigger: true }], skill, "e.json");
+    expect(text).toContain(`expect: ["${skill}"]`);
+    expect(parseSuite(parseYaml(text)).cases[0]?.expect).toEqual([skill]);
+  });
+
   it("keeps a plugin-qualified name plain", () => {
     const { text } = evalSetToSuite([{ query: "q", should_trigger: true }], "plugin:skill-a", "e.json");
     expect(text).toContain("expect: [plugin:skill-a]");
