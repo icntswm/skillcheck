@@ -1,6 +1,6 @@
 {
   "name": "@icntswm/skillcheck",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Regression tests for Claude Code skills: check that every request still loads the right skill",
   "type": "module",
   "bin": {
