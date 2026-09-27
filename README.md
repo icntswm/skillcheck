@@ -1,8 +1,15 @@
 # skillcheck
 
-**Regression tests for Claude Code skills.** Did your last edit to a skill
-description quietly send requests to the wrong skill? skillcheck tells you
-before your users do.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Node 20+](https://img.shields.io/badge/node-20%2B-339933.svg)
+![Claude Code](https://img.shields.io/badge/works%20with-Claude%20Code-d97757.svg)
+
+**Regression tests for Claude Code skills.**
+
+You edited a skill description, installed a plugin or switched models, and now
+some of your requests load the wrong skill. Nothing warns you: the agent still
+answers, just with the wrong instructions. skillcheck catches this before your
+users do.
 
 ```
 $ skillcheck run examples/demo/skillcheck.yaml --skill test-guard,find-bug
@@ -18,27 +25,43 @@ confusion:
 2 failed of 5 · runs 5 · cost $0.25
 ```
 
-That is a real run. Someone widened one skill's description, and it started
-taking requests that belong to its neighbour.
+This is a real run from the [demo](examples/demo): one skill's description got
+wider, and it started taking requests that belong to its neighbour.
 
-## Why
+## What you get
 
-Claude Code picks a skill by reading the names and descriptions of every skill
-you have. Nothing warns you when that choice changes, and it changes when you:
+- 🎯 **The real routing decision.** skillcheck runs Claude Code itself and reads
+  which skills the model actually loads. Nothing is simulated or guessed from
+  keywords.
+- 💸 **Cheap by design.** Free static checks first. Then one batch call covers
+  25 requests. A full run stops Claude Code the moment it picks a skill, so
+  you pay for the decision, not for the work.
+- 🔍 **Points at the fix.** The confusion block shows which skill took whose
+  requests. When the model names the right skill but doesn't load it, the
+  report says so separately.
+- 🛡️ **Safe on any project.** Runs go in plan mode with edits, shell, web and
+  MCP tools disabled. Your files are never touched.
+- 🧪 **Honest about randomness.** `--repeat` and `threshold` tell a flaky case
+  from a broken one instead of letting you guess.
+- 🏷️ **Catches renames and typos.** Case names are checked against the skills
+  the agent really has, so a renamed skill can't pass silently.
+- ⚙️ **CI-ready.** JUnit and JSON reports, clear exit codes, a spending cap
+  (`--budget`), and `--config-dir` to test only the skills in your repository.
+- 📄 **Plain YAML, one dependency.** Cases are readable by anyone on the team
+  and live next to the skills they test.
 
-- rewrite or shorten a description;
-- add a skill whose description overlaps an old one;
-- install a plugin that brings its own skills;
-- switch to another model.
+## When to run it
 
-The failure is silent: the agent still answers, just with the wrong
-instructions loaded. skillcheck turns "which skill should load for this
-request" into a test suite you rerun after every change.
+- after you rewrite or shorten a skill description;
+- when you add a skill that sounds like an existing one;
+- after installing a plugin that brings its own skills;
+- before switching to another model;
+- on every pull request that touches `skills/`.
 
 ## How it works in one minute
 
-You write requests the way you type them and say which skill must, or must
-not, load:
+Write requests the way you actually type them, and say which skill must, or
+must not, load:
 
 ```yaml
 cases:
@@ -50,13 +73,11 @@ cases:
 ```
 
 skillcheck sends each request to a headless `claude -p`, watches which skills
-the model loads, and stops the process as soon as the answer is known. Tools
-that change anything are disabled, so a run never touches your files.
+the model loads, and stops the process as soon as the answer is clear.
 
 ## Three levels, from free to exact
 
-Every model call carries the full Claude Code system prompt, so checks are not
-free. Start at the cheapest level and go up only when it finds nothing.
+Start at the cheapest level and go up only when it finds nothing.
 
 | Command | Model calls | What it tells you |
 |---|---|---|
@@ -69,11 +90,16 @@ with the normal run in 34 checks out of 34. More in [docs/cost.md](docs/cost.md)
 
 ## Does it really catch regressions?
 
-[examples/demo](examples/demo) has six skills, twelve cases and a bad edit of
-two descriptions. With the good skills every case passes. With the bad edit,
-both `run --batch` and a normal run catch the same two misrouted cases. The
-recorded results, and the edits that did *not* break routing, are in
-[its README](examples/demo/README.md).
+Yes, and the [demo](examples/demo) shows it: six skills, twelve cases and a bad
+edit of two descriptions.
+
+| | good skills | bad edit |
+|---|---|---|
+| `lint` | no problems | flags the too-short description |
+| `run --batch` | 12/12 passed | catches both misrouted cases |
+| `run` | 5/5 passed | catches the same two cases |
+
+The demo README also lists edits that did *not* break routing, and why.
 
 ## Install
 
@@ -102,20 +128,20 @@ stops Claude Code before the first model call, so it costs nothing.
 
 ## Documentation
 
-- [Writing cases](docs/writing-cases.md): the file format and what makes a
-  case catch regressions.
-- [Cost](docs/cost.md): what a run costs and how to spend less.
-- [Reports and CI](docs/ci.md): the confusion block, JSON, JUnit, GitHub
-  Actions, exit codes.
-- [How it works](docs/how-it-works.md): what happens inside a run, and the
-  limits of each level.
-- `skillcheck --help`: every command and option.
+| | |
+|---|---|
+| [Writing cases](docs/writing-cases.md) | the file format and what makes a case catch regressions |
+| [Cost](docs/cost.md) | what a run costs and how to spend less |
+| [Reports and CI](docs/ci.md) | confusion block, JSON, JUnit, GitHub Actions, exit codes |
+| [How it works](docs/how-it-works.md) | what happens inside a run, and the limits of each level |
+
+`skillcheck --help` lists every command and option.
 
 ## Status
 
-Works with Claude Code. Agents are behind a small adapter interface, so
-others that support skills can be added.
+Works with Claude Code. Agents sit behind a small adapter interface, so others
+that support skills can be added.
 
 ## License
 
-MIT
+[MIT](LICENSE)
