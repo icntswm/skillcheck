@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"bat-3","skills":["find-bug","test-guard"]}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Skill","input":{"skill":"find-bug"}}]},"session_id":"bat-3"}

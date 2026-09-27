@@ -1,0 +1,66 @@
+# skillcheck in CI: does a change under skills/ still route correctly?
+#
+# The suite lives in skillcheck.yaml at the repo root, the skills in skills/.
+# `run` costs one model call per case and per repeat, so lint first (free)
+# and keep the suite small; --budget stops the run before the bill grows.
+#
+# Auth: ANTHROPIC_API_KEY below. CLAUDE_CODE_OAUTH_TOKEN (a long-lived token
+# made by `claude setup-token`) works instead — set it in the same env: block.
+#
+# Forks: `pull_request` gets no secrets for PRs from forks, so the paid step
+# fails there. Keep it that way; do not switch to `pull_request_target`, which
+# would run the fork's skills with your key.
+name: skillcheck
+
+on:
+  pull_request:
+    paths:
+      - skills/**
+      - skillcheck.yaml
+  workflow_dispatch:
+
+jobs:
+  routing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: install claude code
+        run: npm install -g @anthropic-ai/claude-code
+
+      # An isolated config dir holding only this repo's skills: the run then
+      # tests them, not whatever happens to be installed on the runner image.
+      - name: build config dir
+        run: |
+          mkdir -p .skillcheck/skills
+          cp -R skills/. .skillcheck/skills/
+
+      # Free: no model calls. Flags short or look-alike descriptions and cases
+      # whose expected skill shares few words with the query.
+      - name: lint
+        run: npx skillcheck lint skillcheck.yaml --config-dir .skillcheck
+
+      # 3 repeats at threshold 0.67 tolerate one flaky routing in three;
+      # --budget refuses to start new runs past ~$5 of estimated spend.
+      - name: run
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: >
+          npx skillcheck run skillcheck.yaml
+          --config-dir .skillcheck
+          --model sonnet
+          --repeat 3 --threshold 0.67
+          --budget 5
+          --junit skillcheck.xml
+
+      # always(): the junit file is written even when routing failed, and a
+      # failed run is the point of the check.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: skillcheck-junit
+          path: skillcheck.xml

@@ -1,0 +1,38 @@
+{
+  "name": "skillcheck",
+  "version": "0.1.0",
+  "description": "Regression tests for agent skill routing: the right skill loads for a query, its neighbours don't",
+  "type": "module",
+  "bin": {
+    "skillcheck": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run lint && npm test && npm run build"
+  },
+  "keywords": [
+    "skills",
+    "claude-code",
+    "agents",
+    "routing",
+    "eval"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
+}

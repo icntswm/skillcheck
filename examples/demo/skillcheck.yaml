@@ -1,0 +1,50 @@
+# Demo suite for the skills in examples/demo/skills. See examples/demo/README.md.
+agent: claude
+model: sonnet
+repeat: 1
+threshold: 1.0
+cases:
+  # find-bug vs test-guard: both are about failing tests
+  - id: bug-consistent
+    query: "TestCheckoutTotal fails on every run since this morning, what broke?"
+    expect: [find-bug]
+    forbid: [test-guard]
+  - id: bug-500
+    query: "POST /orders returns 500 with 'nil pointer dereference', where does it come from?"
+    expect: [find-bug]
+  - id: flaky-retry
+    query: "TestCartMerge fails sometimes and goes green when I rerun the pipeline"
+    expect: [test-guard]
+    forbid: [find-bug]
+  - id: flaky-ci-only
+    query: "this test is red in CI roughly once a day but I can't make it fail locally"
+    expect: [test-guard]
+  # find-bug vs perf-profile: "something is wrong" with the service
+  - id: perf-latency
+    query: "the /search endpoint went from 80ms to 900ms after last week's release"
+    expect: [perf-profile]
+    forbid: [find-bug]
+  - id: perf-memory
+    query: "the worker's memory keeps growing until it gets OOM-killed"
+    expect: [perf-profile]
+  - id: migration-index
+    query: "add an index on orders.created_at, the table has 200M rows and takes writes all day"
+    expect: [db-migrations]
+  - id: migration-type
+    query: "change users.phone from int to text"
+    expect: [db-migrations]
+  - id: changelog-release
+    query: "we're tagging v2.4.0 tomorrow, write up what changed since v2.3"
+    expect: [changelog]
+    forbid: [api-docs]
+  - id: api-docs-endpoint
+    query: "describe the new GET /invoices/{id} endpoint in our OpenAPI spec"
+    expect: [api-docs]
+    forbid: [changelog]
+  # negatives: nothing here needs a skill
+  - id: none-math
+    query: "what is 17 * 23?"
+    none: true
+  - id: none-chat
+    query: "thanks, that's all for today"
+    none: true

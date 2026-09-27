@@ -1,0 +1,4 @@
+node_modules/
+dist/
+# recorded on a personal config, sanitize before publishing (see PLAN.md)
+test/fixtures/claude-*.jsonl

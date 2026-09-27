@@ -1,0 +1,29 @@
+# skillcheck cases. Every case sends query + a stop directive to the agent and
+# checks which skills it loaded.
+# Fields: agent/model/repeat/threshold are suite defaults, each case may override
+#   query       the user request (required)
+#   expect      skills that must all be loaded
+#   expect_any  at least one of these must be loaded
+#   forbid      skills that must not be loaded
+#   first       the skill that must be loaded first
+#   none        expect no skill at all
+#   note        free text, not part of the verdict
+#   id          stable label used in the report and by --only
+#   agents      limit the case to these agents
+agent: claude
+model: sonnet
+repeat: 1
+threshold: 1.0
+cases:
+  - query: "why does TestOrderCreate fail? it was green yesterday"
+    expect: [find-bug]
+    forbid: [test-guard]
+  - query: "TestCartMerge fails sometimes and goes green on retry"
+    expect_any: [stability, test-guard]
+    id: cart-flaky
+  - query: "add an index on orders.created_at without blocking writes"
+    expect: [db-migrations]
+    forbid: [find-bug]
+  - query: "what is 2 + 2?"
+    none: true
+    note: "plain arithmetic must not trigger any skill"

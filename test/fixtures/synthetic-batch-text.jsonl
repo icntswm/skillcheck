@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"bat-2","skills":["find-bug"]}
+{"type":"result","subtype":"success","result":"Sure, here: {\"answers\":[{\"n\":1,\"skills\":[\"a}b\"]}]} — done. }","total_cost_usd":0.02,"session_id":"bat-2"}

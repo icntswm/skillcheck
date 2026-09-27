@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"bat-1","skills":["find-bug","test-guard"]}
+{"type":"assistant","message":{"content":[{"type":"text","text":"thinking about the survey"}]},"session_id":"bat-1"}
+{"type":"result","subtype":"success","result":"Here is the survey answer.","structured_output":{"answers":[{"n":1,"skills":["find-bug"]},{"n":2,"skills":[]}]},"total_cost_usd":0.06,"session_id":"bat-1"}

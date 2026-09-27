@@ -1,0 +1,118 @@
+import type { Case } from "./cases.js";
+import type { ConfusionPair } from "./confusion.js";
+import type { CaseResult, RunVerdict } from "./judge.js";
+import { readVersion } from "./version.js";
+
+export interface SuiteReport {
+  tool: "skillcheck";
+  version: string;
+  file: string;
+  agent: string;
+  model: string | null;
+  /** ISO 8601, when the run started */
+  startedAt: string;
+  durationMs: number;
+  summary: {
+    cases: number;
+    failed: number;
+    skipped: number;
+    runs: number;
+    costUsd: number;
+    unknownCostRuns: number;
+    diagnoses: number;
+    budgetUsd: number | null;
+    budgetReached: boolean;
+  };
+  unavailable: string[];
+  confusion: ConfusionPair[];
+  /** file order, includes skipped cases */
+  cases: CaseReport[];
+}
+
+export interface CaseReport {
+  index: number;
+  id: string | null;
+  query: string;
+  note: string | null;
+  expect: string[];
+  expect_any: string[];
+  forbid: string[];
+  first: string | null;
+  none: boolean;
+  status: "passed" | "failed" | "skipped";
+  passed: number;
+  threshold: number;
+  /** [] for skipped cases */
+  runs: RunVerdict[];
+}
+
+/** A planned case with its result; result === null means the budget skipped it. */
+export interface ReportCase {
+  c: Case;
+  threshold: number;
+  result: CaseResult | null;
+}
+
+export interface ReportInput {
+  file: string;
+  agent: string;
+  model: string | null;
+  /** epoch ms */
+  startedAtMs: number;
+  durationMs: number;
+  /** every selected case in file order, skipped ones included */
+  cases: ReportCase[];
+  unavailable: string[];
+  confusion: ConfusionPair[];
+  budgetUsd: number | null;
+  budgetReached: boolean;
+}
+
+/** The single source of truth for --json and --junit; computed once per run. */
+export function buildReport(input: ReportInput): SuiteReport {
+  const verdicts = input.cases.flatMap((e) => e.result?.runs ?? []);
+  const costs = verdicts.map((v) => v.costUsd);
+  const known = costs.filter((c): c is number => c !== null);
+  return {
+    tool: "skillcheck",
+    version: readVersion(),
+    file: input.file,
+    agent: input.agent,
+    model: input.model,
+    startedAt: new Date(input.startedAtMs).toISOString(),
+    durationMs: input.durationMs,
+    summary: {
+      cases: input.cases.length,
+      failed: input.cases.filter((e) => e.result && !e.result.ok).length,
+      skipped: input.cases.filter((e) => !e.result).length,
+      runs: verdicts.length,
+      costUsd: known.reduce((a, b) => a + b, 0),
+      unknownCostRuns: costs.length - known.length,
+      diagnoses: verdicts.filter((v) => v.diagnosis).length,
+      budgetUsd: input.budgetUsd,
+      budgetReached: input.budgetReached,
+    },
+    unavailable: input.unavailable,
+    confusion: input.confusion,
+    cases: input.cases.map(toCaseReport),
+  };
+}
+
+function toCaseReport(e: ReportCase): CaseReport {
+  const c = e.c;
+  return {
+    index: c.index,
+    id: c.id ?? null,
+    query: c.query,
+    note: c.note ?? null,
+    expect: c.expect,
+    expect_any: c.expect_any,
+    forbid: c.forbid,
+    first: c.first ?? null,
+    none: c.none,
+    status: e.result ? (e.result.ok ? "passed" : "failed") : "skipped",
+    passed: e.result?.passed ?? 0,
+    threshold: e.result?.threshold ?? e.threshold,
+    runs: e.result?.runs ?? [],
+  };
+}

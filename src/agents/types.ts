@@ -1,0 +1,58 @@
+export interface RunOptions {
+  query: string;
+  directive: string;
+  model?: string;
+  timeoutMs: number;
+  earlyStop: boolean;
+  /** claude config dir, passed to the child as CLAUDE_CONFIG_DIR */
+  configDir?: string;
+}
+
+export interface RunResult {
+  /** Skill names, first-seen order, deduped, leading "/" stripped */
+  loaded: string[];
+  /** answer text */
+  text: string;
+  /** total_cost_usd from result event, null if absent */
+  costUsd: number | null;
+  /** from system/init event `skills`, null if absent */
+  availableSkills: string[] | null;
+  /** run failure, null otherwise */
+  error: string | null;
+  stoppedEarly: boolean;
+  durationMs: number;
+}
+
+export interface BatchOptions {
+  prompt: string;
+  schema: object;
+  model?: string;
+  timeoutMs: number;
+  /** claude config dir, passed to the child as CLAUDE_CONFIG_DIR */
+  configDir?: string;
+}
+
+export interface BatchResult {
+  /** structured_output from the result event, null when absent */
+  structured: unknown;
+  /** answer text */
+  text: string;
+  costUsd: number | null;
+  error: string | null;
+  durationMs: number;
+}
+
+export interface SkillList {
+  skills: string[];
+  slashCommands: string[];
+  error: string | null;
+}
+
+export interface AgentAdapter {
+  name: string;
+  run(opts: RunOptions): Promise<RunResult>;
+  /** one call answers many cases; agents without batch mode omit it */
+  runBatch?(opts: BatchOptions): Promise<BatchResult>;
+  /** ask the agent what it can load; agents without this omit it */
+  listSkills?(opts: { configDir?: string; timeoutMs: number }): Promise<SkillList>;
+}

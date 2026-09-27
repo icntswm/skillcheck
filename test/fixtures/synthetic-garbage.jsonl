@@ -1,0 +1,8 @@
+this is not json at all
+
+{"broken": oops
+   {"type":"assistant","message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"ignored-indent"}}]}}
+{"type":"system","subtype":"init","session_id":"syn-3","skills":["test-guard","find-bug"]}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Skill","input":{"command":"test-guard"}}]},"session_id":"syn-3"}
+{"no_such_type":true}
+{"type":"result","subtype":"success","result":"test-guard it is","total_cost_usd":0.02,"session_id":"syn-3"}

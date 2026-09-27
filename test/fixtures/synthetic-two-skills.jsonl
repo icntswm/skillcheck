@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"syn-1","skills":["a","b","c"]}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Skill","input":{"skill":"a"}}]},"session_id":"syn-1"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Skill","input":{"skill":"/b"}}]},"session_id":"syn-1"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"routed to a and b"}]},"session_id":"syn-1"}
+{"type":"result","subtype":"success","result":"answer text","total_cost_usd":0.05,"session_id":"syn-1"}
