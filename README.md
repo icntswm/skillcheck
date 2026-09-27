@@ -111,6 +111,7 @@ The command is `skillcheck`. To try it without installing:
 ```
 skillcheck init              # writes skillcheck.yaml listing your skills
                              # then add a few real requests per skill
+skillcheck gen -o skillcheck.yaml  # or: let the model draft cases, then review them
 skillcheck check             # validates the file, no model calls
 skillcheck lint              # free static checks
 skillcheck run --batch       # cheap pre-check, one call

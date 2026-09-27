@@ -228,6 +228,7 @@ describe("cli run", () => {
     expect(out.text).toContain("--only-new-failures");
     expect(out.text).toContain("skillcheck list");
     expect(out.text).toContain("skillcheck init");
+    expect(out.text).toContain("skillcheck gen");
     expect(out.text).toContain("--config-dir <dir>");
     expect(out.text).toContain("--force");
     const out2 = new Sink();
@@ -1132,5 +1133,141 @@ describe("cli import", () => {
     await main(["--help"], { stdout: out, stderr: out, cwd: tmp });
     expect(out.text).toContain("skillcheck import <file> --skill <name>");
     expect(out.text).toContain("-o, --out <file>");
+  });
+});
+
+describe("cli gen", () => {
+  function emptyConfig(): string {
+    const config = path.join(tmp, "empty-config");
+    mkdirSync(config, { recursive: true });
+    return config;
+  }
+
+  function seedSkills(names: string[]): void {
+    for (const name of names) {
+      const dir = path.join(tmp, ".claude", "skills", name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, "SKILL.md"), `---\ndescription: Handle requests about ${name}\n---\nbody\n`);
+    }
+  }
+
+  function genAdapter(
+    calls: BatchOptions[],
+    answer: (call: number) => Partial<BatchResult> = () => ({
+      structured: { cases: [{ query: "draft request", skill: "alpha", avoid: null }] },
+      costUsd: 0.12,
+      error: null,
+    }),
+  ): AgentAdapter & { calls: BatchOptions[] } {
+    return {
+      name: "claude",
+      calls,
+      async run(): Promise<RunResult> { throw new Error("plain run must not be used"); },
+      async runBatch(opts: BatchOptions): Promise<BatchResult> {
+        calls.push(opts);
+        return {
+          structured: null,
+          text: "",
+          costUsd: null,
+          error: null,
+          durationMs: 1,
+          ...answer(calls.length - 1),
+        };
+      },
+    };
+  }
+
+  it("prints generated YAML and a summary on stderr", async () => {
+    seedSkills(["alpha", "beta"]);
+    const out = new Sink();
+    const err = new Sink();
+    const calls: BatchOptions[] = [];
+    const code = await main(["gen", "--config-dir", emptyConfig(), "--model", "sonnet"],
+      { stdout: out, stderr: err, cwd: tmp }, { adapter: genAdapter(calls) });
+    expect(code).toBe(0);
+    expect(out.text).toContain("# Draft cases written by skillcheck gen (model: sonnet) for: alpha, beta.");
+    expect(out.text).toContain('query: "draft request"');
+    expect(err.text).toBe("drafted 1 cases for 2 skills, cost $0.12\n");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("writes --out and the checker accepts the draft", async () => {
+    seedSkills(["alpha"]);
+    const out = new Sink();
+    expect(await main(["gen", "--config-dir", emptyConfig(), "-o", "draft.yaml"],
+      { stdout: out, stderr: out, cwd: tmp }, { adapter: genAdapter([]) })).toBe(0);
+    expect(out.text).toBe("wrote draft.yaml (1 cases for 1 skills, cost $0.12)\n");
+    const check = new Sink();
+    expect(await main(["check", path.join(tmp, "draft.yaml"), "--no-name-check"],
+      { stdout: check, stderr: check, cwd: tmp })).toBe(0);
+  });
+
+  it("refuses an existing output without --force", async () => {
+    seedSkills(["alpha"]);
+    writeCases("draft.yaml", "keep me");
+    const out = new Sink();
+    const calls: BatchOptions[] = [];
+    expect(await main(["gen", "--config-dir", emptyConfig(), "-o", "draft.yaml"],
+      { stdout: out, stderr: out, cwd: tmp }, { adapter: genAdapter(calls) })).toBe(2);
+    expect(out.text).toBe("skillcheck: draft.yaml exists, use --force to overwrite\n");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects unknown targets and missing skills", async () => {
+    seedSkills(["alpha"]);
+    const unknown = new Sink();
+    expect(await main(["gen", "--config-dir", emptyConfig(), "--skill", "ghost,missing"],
+      { stdout: unknown, stderr: unknown, cwd: tmp }, { adapter: genAdapter([]) })).toBe(2);
+    expect(unknown.text).toContain("unknown skill: ghost, missing");
+
+    const noSkills = new Sink();
+    const clean = mkdtempSync(path.join(tmp, "clean-"));
+    const config = path.join(clean, "config");
+    mkdirSync(config, { recursive: true });
+    expect(await main(["gen", "--config-dir", config],
+      { stdout: noSkills, stderr: noSkills, cwd: clean }, { adapter: genAdapter([]) })).toBe(2);
+    expect(noSkills.text).toContain("no skills found");
+  });
+
+  it("makes three calls for 17 skills", async () => {
+    const names = Array.from({ length: 17 }, (_, i) => `skill-${i + 1}`);
+    seedSkills(names);
+    const calls: BatchOptions[] = [];
+    const out = new Sink();
+    const adapter = genAdapter(calls, (i) => ({
+      structured: { cases: [{ query: `draft ${i}`, skill: names[i * 8] ?? names[0], avoid: null }] },
+      costUsd: 0.01,
+    }));
+    expect(await main(["gen", "--config-dir", emptyConfig(), "-j", "1"],
+      { stdout: out, stderr: out, cwd: tmp }, { adapter })).toBe(0);
+    expect(calls).toHaveLength(3);
+  });
+
+  it("continues after one group error but fails when every group errors", async () => {
+    const names = Array.from({ length: 9 }, (_, i) => `skill-${i + 1}`);
+    seedSkills(names);
+    const calls: BatchOptions[] = [];
+    const out = new Sink();
+    const adapter = genAdapter(calls, (i) => i === 0
+      ? { structured: null, error: "first group failed", costUsd: null }
+      : { structured: { cases: [{ query: "survivor", skill: "skill-9", avoid: null }] }, costUsd: 0.03 });
+    expect(await main(["gen", "--config-dir", emptyConfig(), "-j", "1"],
+      { stdout: out, stderr: out, cwd: tmp }, { adapter })).toBe(0);
+    expect(out.text).toContain("gen failed for skill-1, skill-2, skill-3, skill-4, skill-5, skill-6, skill-7, skill-8: first group failed");
+    expect(out.text).toContain('query: "survivor"');
+
+    const allOut = new Sink();
+    const failing = genAdapter([], () => ({ structured: null, error: "all failed", costUsd: null }));
+    expect(await main(["gen", "--config-dir", emptyConfig(), "-j", "1"],
+      { stdout: allOut, stderr: allOut, cwd: tmp }, { adapter: failing })).toBe(2);
+    expect(allOut.text).not.toContain("cases:\n");
+  });
+
+  it("rejects a non-positive per-skill count", async () => {
+    seedSkills(["alpha"]);
+    const out = new Sink();
+    expect(await main(["gen", "--config-dir", emptyConfig(), "--per-skill", "0"],
+      { stdout: out, stderr: out, cwd: tmp }, { adapter: genAdapter([]) })).toBe(2);
+    expect(out.text).toContain("--per-skill must be an integer >= 1");
   });
 });

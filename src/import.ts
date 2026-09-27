@@ -10,6 +10,10 @@ export interface ImportedSuite {
 
 const PLAIN_NAME = /^[A-Za-z0-9._:/-]+$/;
 
+export function yamlName(name: string): string {
+  return PLAIN_NAME.test(name) && parseYaml(name) === name ? name : JSON.stringify(name);
+}
+
 /**
  * A skill-creator trigger eval set ([{query, should_trigger}], one skill) as a
  * cases file: should_trigger true becomes expect, false becomes forbid.
@@ -34,7 +38,7 @@ export function evalSetToSuite(data: unknown, skill: string, source: string): Im
   if (errors.length > 0) throw new ConfigError(errors);
 
   // plain only when YAML reads it back as the same string: not true, null, 123
-  const name = PLAIN_NAME.test(skill) && parseYaml(skill) === skill ? skill : JSON.stringify(skill);
+  const name = yamlName(skill);
   const lines = [
     `# skillcheck cases imported from ${path.basename(source)} (skill-creator trigger eval set).`,
     "# should_trigger: true became expect, false became forbid: another skill may",

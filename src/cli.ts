@@ -21,6 +21,7 @@ import {
 } from "./cases.js";
 import { confusion } from "./confusion.js";
 import { loadSkillDocs, type SkillDoc } from "./describe.js";
+import { GEN_SCHEMA, buildGenPrompt, genSuite, parseGenAnswer } from "./gen.js";
 import { aggregate, judge, type CaseResult, type RunVerdict } from "./judge.js";
 import { evalSetToSuite, type ImportedSuite } from "./import.js";
 import { toJunit } from "./junit.js";
@@ -41,6 +42,7 @@ Usage:
   skillcheck init [file] [options]    write a starter cases file with those names
   skillcheck import <file> --skill <name>
                                       turn a skill-creator trigger eval set into cases
+  skillcheck gen [options]            draft cases from skill descriptions (one model call per 8 skills)
 
 run options:
   -a, --agent <name>     agent to route with (default: suite or claude)
@@ -79,6 +81,13 @@ init options:
 import options:
       --skill <name>     the skill the eval set is about
   -o, --out <file>       write the cases there instead of stdout (--force overwrites)
+
+gen options:
+      --skill <a,b>      skills to draft (default: user/project skills)
+      --per-skill <n>    positive requests per skill (default: 4)
+  -o, --out <file>       write the cases there instead of stdout (--force overwrites)
+  -m, -j, --timeout and --config-dir work as for run
+
 common:
   -h, --help             show this help
       --version          show version
@@ -90,13 +99,13 @@ nothing reaches the model and nothing is billed, even when not logged in.
 Exit codes: 0 all passed, 1 some case failed or was skipped, 2 config or environment error.
 `;
 
-const COMMANDS = ["run", "check", "lint", "list", "init", "import"];
+const COMMANDS = ["run", "check", "lint", "list", "init", "import", "gen"];
 
 const OPTIONS = {
   help: { type: "boolean", short: "h", default: false },
   version: { type: "boolean", default: false },
   agent: { type: "string" },
-  model: { type: "string" },
+  model: { type: "string", short: "m" },
   jobs: { type: "string", short: "j" },
   only: { type: "string" },
   repeat: { type: "string" },
@@ -120,6 +129,7 @@ const OPTIONS = {
   "config-dir": { type: "string" },
   force: { type: "boolean", default: false },
   out: { type: "string", short: "o" },
+  "per-skill": { type: "string" },
 } satisfies ParseArgsOptionsConfig;
 
 type Values = { [K in keyof typeof OPTIONS]: (typeof OPTIONS)[K]["type"] extends "boolean" ? boolean : string | undefined };
@@ -161,6 +171,7 @@ interface Flags {
   configDir?: string;
   force: boolean;
   out?: string;
+  perSkill: number;
 }
 
 function parseFlags(values: Values, cwd: string): Flags {
@@ -199,6 +210,7 @@ function parseFlags(values: Values, cwd: string): Flags {
     configDir: values["config-dir"] !== undefined ? resolveConfigDir(values["config-dir"], cwd) : undefined,
     force: values.force,
     out: values.out,
+    perSkill: intFlag(values["per-skill"], "per-skill", 1) ?? 4,
   };
 }
 
@@ -282,6 +294,7 @@ export async function main(
     if (command === "list") return await listCommand(flags, io, deps);
     if (command === "init") return await initCommand(positionals[1], flags, io, deps);
     if (command === "import") return importCommand(positionals[1], flags, io);
+    if (command === "gen") return await genCommand(flags, io, deps);
     const file = casesFile(positionals[1], io);
     if (command === "run") return await runCommand(file, flags, io, deps);
     return await checkCommand(file, flags, io);
@@ -486,6 +499,76 @@ function importCommand(positional: string | undefined, flags: Flags, io: Io): nu
   io.stdout.write(
     `wrote ${flags.out} (${total} cases: ${suite.positive} should load ${skill}, ${suite.negative} should not)\n`,
   );
+  return 0;
+}
+
+async function genCommand(flags: Flags, io: Io, deps: { adapter?: AgentAdapter }): Promise<number> {
+  const docs = loadSkillDocs({ cwd: io.cwd, configDir: flags.configDir });
+  const byName = new Map(docs.map((doc) => [doc.name, doc]));
+  let targets: SkillDoc[];
+  if (flags.skill !== undefined) {
+    const names = flags.skill.split(",").map((name) => name.trim()).filter((name) => name !== "");
+    const unknown = names.filter((name, i) => !byName.has(name) && names.indexOf(name) === i);
+    if (unknown.length > 0) throw new UsageError(`unknown skill: ${unknown.join(", ")}`);
+    targets = names.map((name) => byName.get(name) as SkillDoc).filter((doc, i, all) => all.findIndex((other) => other.name === doc.name) === i);
+  } else {
+    targets = docs.filter((doc) => doc.kind === "skill" && doc.plugin === null);
+  }
+  if (targets.length === 0) throw new UsageError("no skills found: put them in .claude/skills or pass --config-dir");
+
+  // before any model call: a refused file must not cost anything
+  const out = flags.out === undefined ? null : path.resolve(io.cwd, flags.out);
+  if (out !== null && fs.existsSync(out) && !flags.force) throw new UsageError(`${flags.out} exists, use --force to overwrite`);
+
+  const adapter = pickAdapter(flags.agent ?? "claude", io, deps);
+  if (!adapter) return 2;
+  if (!adapter.runBatch) throw new UsageError(`agent ${adapter.name} cannot generate cases`);
+  const groups: SkillDoc[][] = [];
+  for (let i = 0; i < targets.length; i += 8) groups.push(targets.slice(i, i + 8));
+  const results = await runPool(groups, flags.jobs, async (group) => {
+    try {
+      const result = await adapter.runBatch!({
+        prompt: buildGenPrompt(group, docs, flags.perSkill),
+        schema: GEN_SCHEMA,
+        model: flags.model,
+        timeoutMs: flags.timeoutSec * 1000,
+        configDir: flags.configDir,
+      });
+      if (result.error) {
+        io.stderr.write(`skillcheck: gen failed for ${group.map((doc) => doc.name).join(", ")}: ${result.error}\n`);
+        return { cases: [], dropped: 0, costUsd: result.costUsd, failed: true };
+      }
+      const parsed = parseGenAnswer(result.structured, new Set(docs.map((doc) => doc.name)));
+      return { ...parsed, costUsd: result.costUsd, failed: false };
+    } catch (e) {
+      const error = (e as Error).message;
+      io.stderr.write(`skillcheck: gen failed for ${group.map((doc) => doc.name).join(", ")}: ${error}\n`);
+      return { cases: [], dropped: 0, costUsd: null, failed: true };
+    }
+  });
+  const successful = results.filter((result): result is NonNullable<typeof result> => result !== undefined && !result.failed);
+  if (successful.length === 0) return 2;
+  const cases = successful.flatMap((result) => result.cases);
+  const dropped = successful.reduce((total, result) => total + result.dropped, 0);
+  if (dropped > 0) io.stderr.write(`note: dropped ${dropped} proposed cases naming unknown skills\n`);
+  const text = genSuite(cases, { model: flags.model ?? null, skills: targets.map((doc) => doc.name) });
+  const knownCosts = results
+    .filter((result): result is NonNullable<typeof result> => result !== undefined)
+    .map((result) => result.costUsd)
+    .filter((cost): cost is number => cost !== null);
+  const cost = knownCosts.length === 0 ? "?" : knownCosts.reduce((total, value) => total + value, 0).toFixed(2);
+  const counts = `${cases.length} cases for ${targets.length} skills, cost $${cost}`;
+  if (out === null) {
+    io.stdout.write(text);
+    io.stderr.write(`drafted ${counts}\n`);
+    return 0;
+  }
+  try {
+    fs.writeFileSync(out, text);
+  } catch (e) {
+    throw new UsageError(`cannot write ${flags.out}: ${(e as Error).message}`);
+  }
+  io.stdout.write(`wrote ${flags.out} (${counts})\n`);
   return 0;
 }
 

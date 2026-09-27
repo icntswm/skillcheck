@@ -86,6 +86,14 @@ skillcheck run --only cart-flaky --repeat 5
 Then either fix the descriptions or accept it with a threshold:
 `repeat: 3, threshold: 0.67` on that case tolerates one miss in three.
 
+## Drafting cases with gen
+
+`skillcheck gen` asks the model to draft positive requests and near misses from
+your installed skill descriptions. It makes one call per eight skills, at
+about the price of one batch call per group. The result is only a draft: review
+every case, remove guesses, and add real phrasings from your request history,
+because generated requests tend to be cleaner than real ones.
+
 ## From skill-creator
 
 Anthropic's skill-creator tunes a description against a trigger eval set: a
