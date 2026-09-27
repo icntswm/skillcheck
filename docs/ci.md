@@ -112,6 +112,8 @@ jobs:
       - uses: actions/checkout@v4
       - id: skillcheck
         uses: icntswm/skillcheck@v1
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       - if: always()
         run: cp "${{ steps.skillcheck.outputs.json }}" skillcheck-baseline.json
       - if: always()
@@ -130,14 +132,17 @@ The pull request workflow restores that cache and passes it to the action:
     key: skillcheck-baseline-
     restore-keys: skillcheck-baseline-
 - uses: icntswm/skillcheck@v1
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   with:
     baseline: skillcheck-baseline.json
     args: --only-new-failures
 ```
 
-Caches of the default branch are visible to pull requests. With
-`--only-new-failures`, a known failure does not block unrelated pull requests,
-but it still shows in the comment.
+Caches of the default branch are visible to pull requests. Until the first
+baseline is saved, the action runs without the comparison and ignores
+`--only-new-failures`, so every failure counts. After that, a known failure
+does not block unrelated pull requests, but it still shows in the comment.
 
 A failing case fails the step, so a step that reads the outputs needs
 `if: always()`. `skillcheck.xml` still works with `actions/upload-artifact`

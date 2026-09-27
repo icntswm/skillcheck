@@ -13,8 +13,9 @@ in short form, `skillcheck --version` the installed version.
 | [`list`](#list) | prints the skills and commands Claude Code sees | none |
 | [`run`](#run) | runs the cases and reports which skills loaded | one per case, or one per 25 with `--batch` |
 
-`[file]` is the cases file. Without it, skillcheck looks for `skillcheck.yaml`,
-`skillcheck.yml` or `skillcheck.json` in the current directory. The format is
+`[file]` is the cases file. Without it, `run`, `check` and `lint` look for
+`skillcheck.yaml`, `skillcheck.yml` or `skillcheck.json` in the current
+directory, and `init` writes `skillcheck.yaml`. The format is
 in [Writing cases](writing-cases.md).
 
 ## Where skills come from
@@ -65,7 +66,7 @@ batch call each. The result is a draft to review; see
 | `--skill a,b` | draft for these skills (default: your user and project skills) |
 | `--plugin <name>` | draft for the skills of this installed plugin |
 | `--per-skill <n>` | requests that should load each skill (default 4); near misses are half that |
-| `-o, --out <file>` | write the cases there instead of stdout; `--force` overwrites |
+| `-o, --out <file>` | write the cases there instead of stdout, as JSON if the name ends in `.json`; `--force` overwrites |
 | `--append <file>` | add the draft to an existing cases file: by default only for skills it has no cases for, skipping requests it already has, keeping its comments |
 
 ## import
@@ -86,9 +87,10 @@ skillcheck check [file] [--skill a,b] [--no-name-check] [--config-dir <dir>]
 ```
 
 Validates the cases file and warns about skill names it cannot find among the
-installed skills, which catches typos and renamed skills. `--no-name-check`
-skips the name check, for a file written on another machine. `--skill` checks
-only the cases that mention those skills.
+installed skills, which catches typos and renamed skills. Plugin skills
+(`plugin:skill`) are not matched: a typo there shows up only in `run`.
+`--no-name-check` skips the name check, for a file written on another machine.
+`--skill` checks only the cases that mention those skills.
 
 ## lint
 
@@ -146,9 +148,9 @@ purpose:
 | `-j, --jobs <n>` | 4 | runs at the same time |
 | `--timeout <sec>` | 180 | limit per run |
 | `--batch` | | one call per chunk of cases: the model *states* its choice instead of making it; cheap, but a lead rather than a proof |
-| `--batch-size <n>` | 25 | cases per batch call |
-| `--directive <file>` | | replace the stop directive sent with every request |
-| `--no-early-stop` | | let the agent finish its turn instead of stopping it once a skill is picked; costs more |
+| `--batch-size <n>` | 25 | cases per batch call; needs `--batch` |
+| `--directive <file>` | | replace the stop directive sent with every request; not with `--batch` |
+| `--no-early-stop` | | let the agent finish its turn instead of stopping it once a skill is picked; costs more; not with `--batch` |
 | `--budget <usd>` | | stop starting new runs once the spend estimate reaches this; the rest is reported as skipped |
 | `--config-dir <dir>` | | see [Where skills come from](#where-skills-come-from) |
 
@@ -172,3 +174,7 @@ What the reports contain and how to compare with `main` in CI:
 | 0 | all cases passed (`lint`: always, unless `--strict` finds something) |
 | 1 | some case failed or was skipped by the budget |
 | 2 | config or environment error, or the agent cannot run (not logged in) |
+
+With `--only-new-failures`, a case that already failed in the baseline does
+not count: the run exits 0 if nothing regressed, no new case fails and the
+budget skipped nothing.

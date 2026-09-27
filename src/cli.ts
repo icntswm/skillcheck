@@ -568,7 +568,7 @@ async function genCommand(flags: Flags, io: Io, deps: { adapter?: AgentAdapter }
         io.stderr.write(`skillcheck: gen failed for ${group.map((doc) => doc.name).join(", ")}: ${result.error}\n`);
         return { cases: [], dropped: 0, costUsd: result.costUsd, failed: true };
       }
-      const parsed = parseGenAnswer(result.structured, new Set(docs.map((doc) => doc.name)));
+      const parsed = parseGenAnswer(result.structured, new Set(docs.map((doc) => doc.name)), new Set(group.map((doc) => doc.name)));
       return { ...parsed, costUsd: result.costUsd, failed: false };
     } catch (e) {
       const error = (e as Error).message;
@@ -587,8 +587,12 @@ async function genCommand(flags: Flags, io: Io, deps: { adapter?: AgentAdapter }
     return true;
   });
   const dropped = successful.reduce((total, result) => total + result.dropped, 0);
-  if (dropped > 0) io.stderr.write(`note: dropped ${dropped} proposed cases naming unknown skills\n`);
+  if (dropped > 0) io.stderr.write(`note: dropped ${dropped} proposed cases naming unknown skills or none of the requested ones\n`);
   const cost = genCost(results.map((result) => result?.costUsd ?? null));
+  if (cases.length === 0) {
+    io.stderr.write(`skillcheck: gen got no usable cases from the model (cost $${cost})\n`);
+    return 2;
+  }
   if (append !== null) {
     const oldQueries = new Set(existing!.cases.map((item) => item.query.trim()));
     const unique = cases.filter((item) => !oldQueries.has(item.query.trim()));
@@ -598,7 +602,7 @@ async function genCommand(flags: Flags, io: Io, deps: { adapter?: AgentAdapter }
     io.stdout.write(`appended ${unique.length} cases to ${flags.append} (${targets.length} skills${suffix}, cost $${cost})\n`);
     return 0;
   }
-  const text = genSuite(cases, { model: flags.model ?? null, skills: targets.map((doc) => doc.name) });
+  const text = genSuite(cases, { model: flags.model ?? null, skills: targets.map((doc) => doc.name), json: out !== null && path.extname(out).toLowerCase() === ".json" });
   const counts = `${cases.length} cases for ${targets.length} skills, cost $${cost}`;
   if (out === null) {
     io.stdout.write(text);
@@ -633,7 +637,8 @@ function appendCases(file: string, cases: GenCase[], skills: string[], model: st
     nextText = JSON.stringify(data, null, 2) + "\n";
   } else {
     const doc = parseDocument(text);
-    const sequence = doc.get("cases", true) as YAMLSeq;
+    // a bare list of cases is the older format, still accepted
+    const sequence = (isSeq(doc.contents) ? doc.contents : doc.get("cases", true)) as YAMLSeq;
     for (const [i, item] of ordered.entries()) {
       const node = doc.createNode(caseEntry(item)) as YAMLMap;
       // [name] like the rest of a cases file, not a block list

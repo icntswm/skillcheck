@@ -12,6 +12,8 @@ export interface BaselineSummary {
   removed: number;
 }
 
+const STATUSES = ["passed", "failed", "skipped"];
+
 /** Parse a --json report; checked up front so a bad file fails before any model call. */
 export function parseBaseline(text: string): SuiteReport {
   const value: unknown = JSON.parse(text);
@@ -20,9 +22,9 @@ export function parseBaseline(text: string): SuiteReport {
   }
   (value as { cases: unknown[] }).cases.forEach((c, i) => {
     const entry = c as Record<string, unknown> | null;
-    if (typeof entry !== "object" || entry === null || typeof entry.query !== "string" || typeof entry.status !== "string" ||
+    if (typeof entry !== "object" || entry === null || typeof entry.query !== "string" || !STATUSES.includes(entry.status as string) ||
       (entry.id !== null && typeof entry.id !== "string")) {
-      throw new Error(`case ${i + 1} is not a report case (needs query, status and id)`);
+      throw new Error(`case ${i + 1} is not a report case (needs query, id and status passed, failed or skipped)`);
     }
   });
   return value as SuiteReport;

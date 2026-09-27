@@ -25,7 +25,7 @@ describe("parseBaseline", () => {
     expect(() => parseBaseline(JSON.stringify(value))).toThrow("not a skillcheck --json report");
   });
 
-  it.each([[null], [{ query: "q", status: "passed" }], [{ id: null, query: 1, status: "passed" }]])("rejects a case entry %j", (entry) => {
+  it.each([[null], [{ query: "q", status: "passed" }], [{ id: null, query: 1, status: "passed" }], [{ id: null, query: "q", status: "errored" }]])("rejects a case entry %j", (entry) => {
     expect(() => parseBaseline(JSON.stringify({ tool: "skillcheck", cases: [entry] }))).toThrow("case 1 is not a report case");
   });
 

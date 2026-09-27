@@ -1231,6 +1231,35 @@ describe("cli gen", () => {
       { stdout: check, stderr: check, cwd: tmp })).toBe(0);
   });
 
+  it("writes JSON for a .json --out", async () => {
+    seedSkills(["alpha"]);
+    const out = new Sink();
+    expect(await main(["gen", "--config-dir", emptyConfig(), "-o", "draft.json"],
+      { stdout: out, stderr: out, cwd: tmp }, { adapter: genAdapter([]) })).toBe(0);
+    expect(JSON.parse(readFileSync(path.join(tmp, "draft.json"), "utf8")).cases).toEqual([{ query: "draft request", expect: ["alpha"] }]);
+    const check = new Sink();
+    expect(await main(["check", path.join(tmp, "draft.json"), "--no-name-check"],
+      { stdout: check, stderr: check, cwd: tmp })).toBe(0);
+  });
+
+  it("drops drafted cases that neither load nor avoid a requested skill", async () => {
+    seedSkills(["alpha", "beta"]);
+    const out = new Sink();
+    const err = new Sink();
+    const adapter = genAdapter([], () => ({
+      structured: { cases: [
+        { query: "for beta", skill: "beta", avoid: null },
+        { query: "beta not alpha", skill: "beta", avoid: "alpha" },
+      ] },
+      costUsd: 0.01,
+    }));
+    expect(await main(["gen", "--config-dir", emptyConfig(), "--skill", "alpha"],
+      { stdout: out, stderr: err, cwd: tmp }, { adapter })).toBe(0);
+    expect(out.text).not.toContain("for beta");
+    expect(out.text).toContain('query: "beta not alpha"');
+    expect(err.text).toContain("dropped 1 proposed cases");
+  });
+
   it("refuses an existing output without --force", async () => {
     seedSkills(["alpha"]);
     writeCases("draft.yaml", "keep me");
@@ -1369,6 +1398,34 @@ describe("cli gen", () => {
       "# keep this comment\nagent: claude\ncases:\n  - query: old\n    expect: [alpha]\n" +
       "  # gen draft (model: default): review these cases\n  - query: new beta\n    expect: [beta]\n",
     );
+    const check = new Sink();
+    expect(await main(["check", file, "--no-name-check"], { stdout: check, stderr: check, cwd: tmp })).toBe(0);
+  });
+
+  it("exits 2 when the model gives no usable cases, leaving the append file as it was", async () => {
+    seedSkills(["alpha", "beta"]);
+    const before = "cases:\n  - query: old\n    expect: [alpha]\n";
+    const file = writeCases("cases.yaml", before);
+    const adapter = genAdapter([], () => ({ structured: { cases: [] }, costUsd: 0.01 }));
+    const err = new Sink();
+    expect(await main(["gen", "--config-dir", emptyConfig(), "--append", file],
+      { stdout: new Sink(), stderr: err, cwd: tmp }, { adapter })).toBe(2);
+    expect(err.text).toContain("gen got no usable cases from the model (cost $0.01)");
+    expect(readFileSync(file, "utf8")).toBe(before);
+    expect(await main(["gen", "--config-dir", emptyConfig()],
+      { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter })).toBe(2);
+  });
+
+  it("appends to a bare YAML list of cases", async () => {
+    seedSkills(["alpha", "beta"]);
+    const file = writeCases("cases.yaml", "- query: old\n  expect: [alpha]\n");
+    const out = new Sink();
+    const adapter = genAdapter([], () => ({
+      structured: { cases: [{ query: "new beta", skill: "beta", avoid: null }] }, costUsd: 0.02,
+    }));
+    expect(await main(["gen", "--config-dir", emptyConfig(), "--append", file],
+      { stdout: out, stderr: out, cwd: tmp }, { adapter })).toBe(0);
+    expect(readFileSync(file, "utf8")).toContain("- query: new beta\n  expect: [beta]\n");
     const check = new Sink();
     expect(await main(["check", file, "--no-name-check"], { stdout: check, stderr: check, cwd: tmp })).toBe(0);
   });

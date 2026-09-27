@@ -69,7 +69,8 @@ export function buildGenPrompt(targets: SkillDoc[], context: SkillDoc[], perSkil
   ].join("\n");
 }
 
-export function parseGenAnswer(structured: unknown, known: Set<string>): { cases: GenCase[]; dropped: number } {
+// targets: the skills asked for; every case must load or avoid one of them
+export function parseGenAnswer(structured: unknown, known: Set<string>, targets: Set<string> = known): { cases: GenCase[]; dropped: number } {
   if (typeof structured !== "object" || structured === null || Array.isArray(structured)) return { cases: [], dropped: 0 };
   const rawCases = (structured as Record<string, unknown>).cases;
   if (!Array.isArray(rawCases)) return { cases: [], dropped: 0 };
@@ -85,7 +86,8 @@ export function parseGenAnswer(structured: unknown, known: Set<string>): { cases
     if (typeof query !== "string" || query.trim() === "" ||
       (skill !== null && (typeof skill !== "string" || !known.has(skill))) ||
       (avoid !== null && (typeof avoid !== "string" || !known.has(avoid))) ||
-      (skill === null && avoid === null) || skill === avoid || seen.has(query)) {
+      (skill === null && avoid === null) || skill === avoid || seen.has(query) ||
+      !((skill !== null && targets.has(skill as string)) || (avoid !== null && targets.has(avoid as string)))) {
       dropped++;
       continue;
     }
@@ -95,8 +97,14 @@ export function parseGenAnswer(structured: unknown, known: Set<string>): { cases
   return { cases, dropped };
 }
 
-export function genSuite(cases: GenCase[], meta: { model: string | null; skills: string[] }): string {
+export function genSuite(cases: GenCase[], meta: { model: string | null; skills: string[]; json?: boolean }): string {
   const ordered = orderCases(cases, meta.skills);
+  if (meta.json) {
+    // JSON has no comments: the review note lives only in the command output
+    const data = { agent: "claude", repeat: 1, threshold: 1, cases: ordered.map(caseEntry) };
+    parseSuite(data);
+    return JSON.stringify(data, null, 2) + "\n";
+  }
   const lines = [
     `# Draft cases written by skillcheck gen (model: ${meta.model ?? "default"}) for: ${meta.skills.join(", ")}.`,
     "# Review every case: the model guessed what should route where. Delete what is wrong,",
