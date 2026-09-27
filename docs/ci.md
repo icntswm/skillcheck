@@ -24,6 +24,9 @@ to narrow the skill on the right, not to widen the one on the left.
 - `--junit skillcheck.xml` writes JUnit XML that GitLab and GitHub show as a
   test report. A misrouted case is a failure, a case where every run errored
   is an error, a case skipped by `--budget` is skipped.
+- `--markdown report.md` writes a short summary for a pull request comment or
+  a job summary: a header with the counts, a table of the failed and skipped
+  cases, the passed ones folded, and the confusion block.
 
 ## Exit codes
 
@@ -62,6 +65,9 @@ on:
 jobs:
   skillcheck:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # for the report comment
     steps:
       - uses: actions/checkout@v4
       - uses: icntswm/skillcheck@v1
@@ -83,11 +89,27 @@ jobs:
 | `budget` | `5` | spending cap in USD |
 | `junit` | `skillcheck.xml` | JUnit report path, empty disables it |
 | `args` | | extra arguments for `skillcheck run` |
+| `comment` | `true` | post the report as a pull request comment |
+| `github-token` | `github.token` | token for that comment |
 | `version` | `latest` | skillcheck version to install |
 
-To see the report in the pull request, upload `skillcheck.xml` with
-`actions/upload-artifact` or feed it to a JUnit reporter action, with
-`if: always()` so it runs when cases fail.
+The report lands in the job summary and, on pull requests, in a comment. A
+rerun edits that comment instead of adding a new one. Without
+`pull-requests: write` the comment step only warns; pull requests from forks
+never get that permission. Two jobs that both run the action on one pull
+request share the comment, so turn `comment` off in all but one.
+
+Outputs, for the steps after it:
+
+| Output | Meaning |
+|---|---|
+| `passed`, `failed`, `skipped` | case counts |
+| `cost` | spend in USD, with the estimate for runs that reported no cost |
+| `json`, `markdown` | paths to the reports |
+
+A failing case fails the step, so a step that reads the outputs needs
+`if: always()`. `skillcheck.xml` still works with `actions/upload-artifact`
+or a JUnit reporter action.
 
 Without the action, [examples/github-actions.yml](../examples/github-actions.yml) runs on pull
 requests that touch `skills/` or the suite: `lint` first (free), then `run`

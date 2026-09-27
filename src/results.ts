@@ -9,6 +9,8 @@ export interface SuiteReport {
   file: string;
   agent: string;
   model: string | null;
+  /** batch mode: the model stated its choices instead of making them */
+  batch: boolean;
   /** ISO 8601, when the run started */
   startedAt: string;
   durationMs: number;
@@ -59,6 +61,8 @@ export interface ReportInput {
   file: string;
   agent: string;
   model: string | null;
+  /** batch mode: the model stated its choices instead of making them */
+  batch?: boolean;
   /** epoch ms */
   startedAtMs: number;
   durationMs: number;
@@ -83,6 +87,7 @@ export function buildReport(input: ReportInput): SuiteReport {
     file: input.file,
     agent: input.agent,
     model: input.model,
+    batch: input.batch ?? false,
     startedAt: new Date(input.startedAtMs).toISOString(),
     durationMs: input.durationMs,
     summary: {

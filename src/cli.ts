@@ -23,6 +23,7 @@ import { loadSkillDocs, type SkillDoc } from "./describe.js";
 import { aggregate, judge, type CaseResult, type RunVerdict } from "./judge.js";
 import { toJunit } from "./junit.js";
 import { lint, LINT_DEFAULTS, type LintReport } from "./lint.js";
+import { toMarkdown } from "./markdown.js";
 import { runPool } from "./pool.js";
 import { oneLine, Reporter, type ReportStream } from "./report.js";
 import { buildReport } from "./results.js";
@@ -53,6 +54,7 @@ run options:
       --json <path>      machine-readable report to path ("-" writes it to stdout
                          and the terminal report to stderr)
       --junit <path>     JUnit XML report (GitLab/GitHub test reporters) to path
+      --markdown <path>  Markdown summary (PR comments, GitHub job summary) to path
 run/check options:
       --skill <a,b>      keep only cases that mention these skills
 check options:
@@ -98,6 +100,7 @@ const OPTIONS = {
   budget: { type: "string" },
   json: { type: "string" },
   junit: { type: "string" },
+  markdown: { type: "string" },
   top: { type: "string" },
   overlap: { type: "string" },
   strict: { type: "boolean", default: false },
@@ -135,6 +138,7 @@ interface Flags {
   budget?: number;
   json?: string;
   junit?: string;
+  markdown?: string;
   top: number;
   overlap: number;
   strict: boolean;
@@ -166,6 +170,7 @@ function parseFlags(values: Values, cwd: string): Flags {
     budget: numberFlag(values.budget),
     json: values.json,
     junit: values.junit,
+    markdown: values.markdown,
     top: intFlag(values.top, "top", 1) ?? 5,
     overlap: ratioFlag(values.overlap) ?? 0.3,
     strict: values.strict,
@@ -581,6 +586,7 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
     cases: items.map((item) => ({ c: item.c, threshold: item.threshold, result: outcome.results[item.jobIndex] ?? null })),
     unavailable,
     confusion: pairs,
+    batch: flags.batch,
     estimatedCostUsd: budget.spent,
     budgetUsd: flags.budget ?? null,
     budgetReached: skipped.length > 0,
@@ -591,6 +597,7 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
     else writeReportFile(flags.json, payload, "--json");
   }
   if (flags.junit !== undefined) writeReportFile(flags.junit, toJunit(report), "--junit");
+  if (flags.markdown !== undefined) writeReportFile(flags.markdown, toMarkdown(report), "--markdown");
 
   return ordered.some((r) => !r.ok) || skipped.length > 0 ? 1 : 0;
 }

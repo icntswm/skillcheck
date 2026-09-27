@@ -56,9 +56,14 @@ jobs:
           --repeat 3 --threshold 0.67
           --budget 5
           --junit skillcheck.xml
+          --markdown skillcheck.md
 
-      # always(): the junit file is written even when routing failed, and a
+      # always(): the reports are written even when routing failed, and a
       # failed run is the point of the check.
+      - name: job summary
+        if: always()
+        run: if [ -f skillcheck.md ]; then cat skillcheck.md >> "$GITHUB_STEP_SUMMARY"; fi
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:

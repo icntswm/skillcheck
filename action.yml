@@ -42,12 +42,40 @@ inputs:
   args:
     description: Extra arguments for skillcheck run.
     default: ""
+  comment:
+    description: >
+      Post the report as a pull request comment and update it on every run.
+      The job needs pull-requests: write; without it the step only warns.
+    default: "true"
+  github-token:
+    description: Token for the pull request comment.
+    default: ${{ github.token }}
   version:
     description: "@icntswm/skillcheck version to install."
     default: latest
   claude-code-version:
     description: "@anthropic-ai/claude-code version to install."
     default: latest
+
+outputs:
+  passed:
+    description: Cases that passed.
+    value: ${{ steps.report.outputs.passed }}
+  failed:
+    description: Cases that failed.
+    value: ${{ steps.report.outputs.failed }}
+  skipped:
+    description: Cases skipped by the budget.
+    value: ${{ steps.report.outputs.skipped }}
+  cost:
+    description: Spend in USD, with runs that reported no cost estimated from tokens.
+    value: ${{ steps.report.outputs.cost }}
+  json:
+    description: Path to the JSON report.
+    value: ${{ steps.report.outputs.json }}
+  markdown:
+    description: Path to the Markdown report, also shown in the job summary.
+    value: ${{ steps.report.outputs.markdown }}
 
 runs:
   using: composite
@@ -101,5 +129,56 @@ runs:
         [ -n "$THRESHOLD" ] && args+=(--threshold "$THRESHOLD")
         [ -n "$BUDGET" ] && args+=(--budget "$BUDGET")
         [ -n "$JUNIT" ] && args+=(--junit "$JUNIT")
+        args+=(--json "$RUNNER_TEMP/skillcheck.json")
+        # a pinned version older than 1.1.0 has no Markdown report
+        # grep reads it all: with -q it would exit early and fail the pipe under pipefail
+        if skillcheck --help | grep -- --markdown > /dev/null; then args+=(--markdown "$RUNNER_TEMP/skillcheck.md"); fi
         read -ra extra <<< "$EXTRA"
         skillcheck "${args[@]}" "${extra[@]}"
+
+    - name: report
+      id: report
+      if: always() && inputs.run == 'true'
+      shell: bash
+      run: |
+        json="$RUNNER_TEMP/skillcheck.json"
+        md="$RUNNER_TEMP/skillcheck.md"
+        # no report means the run never got to the cases: bad config or no login
+        [ -f "$json" ] || exit 0
+        node -e '
+          const s = require(process.argv[1]).summary;
+          console.log(`passed=${s.cases - s.failed - s.skipped}`);
+          console.log(`failed=${s.failed}`);
+          console.log(`skipped=${s.skipped}`);
+          console.log(`cost=${s.estimatedCostUsd.toFixed(4)}`);
+        ' "$json" >> "$GITHUB_OUTPUT"
+        echo "json=$json" >> "$GITHUB_OUTPUT"
+        if [ -f "$md" ]; then
+          echo "markdown=$md" >> "$GITHUB_OUTPUT"
+          cat "$md" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: comment
+      if: always() && steps.report.outputs.markdown != '' && inputs.comment == 'true' && github.event.pull_request
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+        MD: ${{ steps.report.outputs.markdown }}
+      run: |
+        body="$RUNNER_TEMP/skillcheck-comment.md"
+        # GitHub rejects comments over 65536 characters
+        if [ "$(wc -c < "$MD")" -gt 60000 ]; then
+          { head -c 60000 "$MD"; printf '\n\n…cut; the full report is in the job summary.\n'; } > "$body"
+        else
+          cp "$MD" "$body"
+        fi
+        # the report starts with a marker, so a rerun edits its comment instead of adding one
+        id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+          --jq '.[] | select(.body | startswith("<!-- skillcheck -->")) | .id' | tail -n 1) || id=""
+        if [ -n "$id" ]; then
+          gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@"$body" > /dev/null
+        else
+          gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@"$body" > /dev/null
+        fi || echo "::warning::skillcheck could not comment on the pull request; the job needs pull-requests: write (forks never get it)"

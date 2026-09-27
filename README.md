@@ -36,9 +36,10 @@ requests.
   from a broken one instead of letting you guess.
 - 🏷️ **Catches renames and typos.** Case names are checked against the skills
   the agent really has, so a renamed skill can't pass silently.
-- ⚙️ **CI-ready.** A GitHub Action (`uses: icntswm/skillcheck@v1`), JUnit
-  and JSON reports, clear exit codes, a spending cap (`--budget`), and
-  `--config-dir` to test only the skills in your repository.
+- ⚙️ **CI-ready.** A GitHub Action (`uses: icntswm/skillcheck@v1`) that
+  comments the report on the pull request, JUnit, JSON and Markdown reports,
+  clear exit codes, a spending cap (`--budget`), and `--config-dir` to test
+  only the skills in your repository.
 - 📄 **Plain YAML, one dependency.** Cases are readable by anyone on the team
   and live next to the skills they test.
 
@@ -125,7 +126,7 @@ stops Claude Code before the first model call, so it costs nothing.
 |---|---|
 | [Writing cases](docs/writing-cases.md) | the file format and what makes a case catch regressions |
 | [Cost](docs/cost.md) | what a run costs and how to spend less |
-| [Reports and CI](docs/ci.md) | confusion block, JSON, JUnit, GitHub Actions, exit codes |
+| [Reports and CI](docs/ci.md) | confusion block, JSON, JUnit, Markdown, GitHub Actions, exit codes |
 | [How it works](docs/how-it-works.md) | what happens inside a run, and the limits of each level |
 
 `skillcheck --help` lists every command and option.

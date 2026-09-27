@@ -223,6 +223,7 @@ describe("cli run", () => {
     expect(out.text).toContain("--budget <usd>");
     expect(out.text).toContain("--json <path>");
     expect(out.text).toContain("--junit <path>");
+    expect(out.text).toContain("--markdown <path>");
     expect(out.text).toContain("skillcheck list");
     expect(out.text).toContain("skillcheck init");
     expect(out.text).toContain("--config-dir <dir>");
@@ -611,21 +612,26 @@ describe("cli --json and --junit", () => {
     expect(stderr.text).toContain("ok    #1");
   });
 
-  it("writes --json and --junit files and the confusion block", async () => {
+  it("writes --json, --junit and --markdown files and the confusion block", async () => {
     const file = writeCases("cases.json", SUITE);
     const jsonPath = path.join(tmp, "report.json");
     const xmlPath = path.join(tmp, "report.xml");
+    const mdPath = path.join(tmp, "report.md");
     const adapter = fakeAdapter({ "why does it fail": { loaded: ["test-guard"] }, "flaky on retry": { loaded: ["test-guard"] } });
     const out = new Sink();
-    const code = await main(["run", file, "--json", jsonPath, "--junit", xmlPath], { stdout: out, stderr: out, cwd: tmp }, { adapter });
+    const code = await main(["run", file, "--json", jsonPath, "--junit", xmlPath, "--markdown", mdPath], { stdout: out, stderr: out, cwd: tmp }, { adapter });
     expect(code).toBe(1);
     const report = JSON.parse(readFileSync(jsonPath, "utf8"));
     expect(report.summary.failed).toBe(1);
+    expect(report.batch).toBe(false);
     expect(report.cases[1].id).toBe("flaky-case");
     expect(report.confusion).toEqual([{ expected: "find-bug", got: "test-guard", count: 1 }]);
     const xml = readFileSync(xmlPath, "utf8");
     expect(xml).toContain('<testsuites name="skillcheck" tests="2" failures="1" errors="0"');
     expect(xml).toContain('<failure message="not loaded find-bug" type="routing">');
+    const md = readFileSync(mdPath, "utf8");
+    expect(md.startsWith("<!-- skillcheck -->\n")).toBe(true);
+    expect(md).toContain("❌");
     expect(out.text).toContain("confusion:");
     expect(out.text).toContain("  expected find-bug → got test-guard (1)");
   });
