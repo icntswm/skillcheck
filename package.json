@@ -1,7 +1,7 @@
 {
   "name": "skillcheck",
   "version": "0.1.0",
-  "description": "Regression tests for agent skill routing: the right skill loads for a query, its neighbours don't",
+  "description": "Regression tests for Claude Code skills: check that every request still loads the right skill",
   "type": "module",
   "bin": {
     "skillcheck": "dist/cli.js"
@@ -19,11 +19,12 @@
     "prepublishOnly": "npm run lint && npm test && npm run build"
   },
   "keywords": [
-    "skills",
     "claude-code",
+    "skills",
     "agents",
     "routing",
-    "eval"
+    "eval",
+    "regression-testing"
   ],
   "license": "MIT",
   "dependencies": {
@@ -34,5 +35,10 @@
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.2"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/icntswm/skillcheck.git"
+  },
+  "homepage": "https://github.com/icntswm/skillcheck#readme"
 }

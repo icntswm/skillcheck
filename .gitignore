@@ -1,4 +1,4 @@
 node_modules/
 dist/
-# recorded on a personal config, sanitize before publishing (see PLAN.md)
+# real recorded runs, kept local
 test/fixtures/claude-*.jsonl
