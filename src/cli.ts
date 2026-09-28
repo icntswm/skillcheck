@@ -683,7 +683,11 @@ async function suggestCommand(positional: string | undefined, flags: Flags, io: 
     targetNames = targetNames.filter((name) => selected.has(name));
   }
   if (targetNames.length === 0) {
-    io.stderr.write(`nothing to suggest: the confused skills have no descriptions on disk (${confusedNames.join(", ")})\n`);
+    const missing = confusedNames.filter((name) => !byName.has(name) && !unavailable.has(name));
+    const why = flags.skill !== undefined ? "--skill names none of the confused skills that can be fixed"
+      : missing.length > 0 ? `no descriptions on disk for ${missing.join(", ")}`
+      : "the agent did not see any of the confused skills";
+    io.stderr.write(`nothing to suggest: ${why}\n`);
     return 0;
   }
   const evidence = suggestEvidence(suiteReport, targetNames);

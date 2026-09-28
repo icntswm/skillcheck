@@ -1807,6 +1807,8 @@ describe("cli suggest", () => {
     const out2 = new Sink();
     expect(await main(["suggest", hidden, "--config-dir", config()], { stdout: out2, stderr: out2, cwd: tmp }, { adapter: adapter(calls) })).toBe(0);
     expect(out2.text).toContain("did not see alpha");
+    expect(out2.text).toContain("nothing to suggest: the agent did not see any of the confused skills");
+    expect(out2.text).not.toContain("no descriptions on disk");
     expect(calls).toHaveLength(0);
   });
 
