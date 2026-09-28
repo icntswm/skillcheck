@@ -122,6 +122,15 @@ describe("Reporter", () => {
     expect(text()).toBe("\n1 failed of 2 · runs 2 · cost $0.14\n");
   });
 
+  it("shows the cost saved by cached cases only when it is positive", () => {
+    const { text, stream } = makeSink();
+    new Reporter(stream).summary([result({ runs: [verdict({ costUsd: 0.1 })] })], { cached: 2, savedUsd: 1.8 });
+    expect(text()).toContain(", 2 cached (saved $1.80)");
+    const zero = makeSink();
+    new Reporter(zero.stream).summary([result()], { cached: 1, savedUsd: 0 });
+    expect(zero.text()).not.toContain("(saved");
+  });
+
   it("marks unknown costs", () => {
     const { text, stream } = makeSink();
     new Reporter(stream).summary([

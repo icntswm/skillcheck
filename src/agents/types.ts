@@ -6,6 +6,7 @@ export interface RunOptions {
   earlyStop: boolean;
   /** claude config dir, passed to the child as CLAUDE_CONFIG_DIR */
   configDir?: string;
+  pluginDirs?: string[];
 }
 
 /** Billed tokens of one run, as the API reports them. */
@@ -42,6 +43,7 @@ export interface BatchOptions {
   timeoutMs: number;
   /** claude config dir, passed to the child as CLAUDE_CONFIG_DIR */
   configDir?: string;
+  pluginDirs?: string[];
 }
 
 export interface BatchResult {
@@ -69,5 +71,5 @@ export interface AgentAdapter {
   /** one call answers many cases; agents without batch mode omit it */
   runBatch?(opts: BatchOptions): Promise<BatchResult>;
   /** ask the agent what it can load; agents without this omit it */
-  listSkills?(opts: { configDir?: string; timeoutMs: number }): Promise<SkillList>;
+  listSkills?(opts: { configDir?: string; pluginDirs?: string[]; timeoutMs: number }): Promise<SkillList>;
 }

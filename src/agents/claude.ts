@@ -213,6 +213,7 @@ function claudeArgs(opts: RunOptions): string[] {
     "--disallowedTools", ...DISALLOWED_TOOLS,
   ];
   if (opts.model) args.push("--model", opts.model);
+  for (const dir of opts.pluginDirs ?? []) args.push("--plugin-dir", dir);
   return args;
 }
 
@@ -230,13 +231,14 @@ function batchArgs(opts: BatchOptions): string[] {
     "--disallowedTools", ...DISALLOWED_TOOLS,
   ];
   if (opts.model) args.push("--model", opts.model);
+  for (const dir of opts.pluginDirs ?? []) args.push("--plugin-dir", dir);
   return args;
 }
 
-function listArgs(): string[] {
+function listArgs(opts: { pluginDirs?: string[] }): string[] {
   // The init event arrives before any model call, so the process is killed
   // before anything is billed; the disallow list is a guard for that race.
-  return [
+  const args = [
     "-p", "none",
     "--output-format", "stream-json",
     "--verbose",
@@ -244,6 +246,8 @@ function listArgs(): string[] {
     "--permission-mode", "plan",
     "--disallowedTools", ...DISALLOWED_TOOLS,
   ];
+  for (const dir of opts.pluginDirs ?? []) args.push("--plugin-dir", dir);
+  return args;
 }
 
 /** Seconds as written in the timeout message: 180000 -> "180", 400 -> "0.4". */
@@ -385,11 +389,11 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   /** Ask the agent for its skill lists; killed right after init, so no model call. */
-  async listSkills(opts: { configDir?: string; timeoutMs: number }): Promise<SkillList> {
+  async listSkills(opts: { configDir?: string; pluginDirs?: string[]; timeoutMs: number }): Promise<SkillList> {
     const bin = process.env.SKILLCHECK_CLAUDE_BIN || "claude";
     const workdir = await mkdtemp(path.join(os.tmpdir(), "skillcheck-"));
     try {
-      const out = await this.streamRun(bin, listArgs(), workdir, opts.timeoutMs, {
+      const out = await this.streamRun(bin, listArgs(opts), workdir, opts.timeoutMs, {
         earlyStop: false,
         configDir: opts.configDir,
         stop: (stream) => stream.sawInit,

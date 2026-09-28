@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { Writable } from "node:stream";
 import * as os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { main } from "../src/cli.js";
 import type { AgentAdapter, BatchOptions, BatchResult, RunOptions, RunResult, SkillList } from "../src/agents/types.js";
@@ -60,6 +61,13 @@ const SUITE = {
 };
 
 describe("cli check", () => {
+  it("rejects a missing plugin directory as a usage error", async () => {
+    const out = new Sink();
+    const code = await main(["check", "missing.json", "--plugin-dir", "no-such-plugin"], { stdout: out, stderr: out, cwd: tmp });
+    expect(code).toBe(2);
+    expect(out.text).toContain("--plugin-dir is not a directory");
+  });
+
   it("accepts a valid file without the name check", async () => {
     const file = writeCases("cases.json", SUITE);
     const out = new Sink();
@@ -95,9 +103,49 @@ describe("cli check", () => {
       else process.env.CLAUDE_CONFIG_DIR = prev;
     }
   });
+
+  it("checks source plugin names while leaving installed-plugin names unchecked", async () => {
+    const plugin = path.join(tmp, "plugin");
+    mkdirSync(path.join(plugin, ".claude-plugin"), { recursive: true });
+    mkdirSync(path.join(plugin, "skills", "skill"), { recursive: true });
+    writeFileSync(path.join(plugin, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "p" }));
+    writeFileSync(path.join(plugin, "skills", "skill", "SKILL.md"), "---\ndescription: source skill\n---\nbody\n");
+    const cfg = path.join(tmp, "empty-config");
+    mkdirSync(cfg);
+    const bad = writeCases("bad-plugin.json", { cases: [{ query: "q", expect: ["p:typo"] }] });
+    const good = writeCases("good-plugin.json", { cases: [
+      { query: "q", expect: ["p:skill"] },
+      { query: "q2", expect: ["other:x"] },
+    ] });
+    const badOut = new Sink();
+    expect(await main(["check", bad, "--config-dir", cfg, "--plugin-dir", plugin], { stdout: badOut, stderr: badOut, cwd: tmp })).toBe(2);
+    expect(badOut.text).toContain('unknown skill "p:typo"');
+    expect(await main(["check", good, "--config-dir", cfg, "--plugin-dir", plugin], { stdout: new Sink(), stderr: new Sink(), cwd: tmp })).toBe(0);
+  });
 });
 
 describe("cli run", () => {
+  it("passes a relative plugin directory resolved from io.cwd to claude", async () => {
+    const plugin = path.join(tmp, "plugin");
+    mkdirSync(path.join(plugin, ".claude-plugin"), { recursive: true });
+    writeFileSync(path.join(plugin, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "p" }));
+    const file = writeCases("plugin-run.json", { cases: [{ query: "why does it fail", expect: ["test-guard"] }] });
+    const argsOut = path.join(tmp, "claude-args.json");
+    const previous = { bin: process.env.SKILLCHECK_CLAUDE_BIN, fixture: process.env.FAKE_FIXTURE, args: process.env.FAKE_ARGS_OUT };
+    process.env.SKILLCHECK_CLAUDE_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "bin", "fake-claude.mjs");
+    process.env.FAKE_FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "synthetic-garbage.jsonl");
+    process.env.FAKE_ARGS_OUT = argsOut;
+    try {
+      expect(await main(["run", file, "--plugin-dir", "plugin"], { stdout: new Sink(), stderr: new Sink(), cwd: tmp })).toBe(0);
+      const seen = JSON.parse(readFileSync(argsOut, "utf8")) as { args: string[] };
+      expect(seen.args).toContain("--plugin-dir");
+      expect(seen.args[seen.args.indexOf("--plugin-dir") + 1]).toBe(plugin);
+    } finally {
+      if (previous.bin === undefined) delete process.env.SKILLCHECK_CLAUDE_BIN; else process.env.SKILLCHECK_CLAUDE_BIN = previous.bin;
+      if (previous.fixture === undefined) delete process.env.FAKE_FIXTURE; else process.env.FAKE_FIXTURE = previous.fixture;
+      if (previous.args === undefined) delete process.env.FAKE_ARGS_OUT; else process.env.FAKE_ARGS_OUT = previous.args;
+    }
+  });
   it("passes all cases, prints header, lines and summary, exits 0", async () => {
     const file = writeCases("cases.json", SUITE);
     const out = new Sink();
@@ -434,6 +482,39 @@ describe("cli run", () => {
     writeFileSync(path.join(config, "CLAUDE.md"), "user memory\n");
     expect(await run()).toBe(0);
     expect(calls).toHaveLength(4);
+  });
+
+  it("invalidates a source-plugin cache entry on description changes, not body changes", async () => {
+    const plugin = path.join(tmp, "plugin");
+    const skillFile = path.join(plugin, "skills", "skill", "SKILL.md");
+    mkdirSync(path.join(plugin, ".claude-plugin"), { recursive: true });
+    mkdirSync(path.dirname(skillFile), { recursive: true });
+    mkdirSync(path.join(tmp, "empty-config"));
+    writeFileSync(path.join(plugin, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "p" }));
+    writeFileSync(skillFile, "---\ndescription: route this\n---\nbody\n");
+    const file = writeCases("plugin-cache.json", { cases: [{ query: "q", expect: ["p:skill"] }] });
+    const cache = path.join(tmp, "plugin-cache-file.json");
+    const calls: RunOptions[] = [];
+    const adapter = fakeAdapter({ q: { loaded: ["p:skill"] } }, calls);
+    const run = () => main(["run", file, "--cache", cache, "--config-dir", "empty-config", "--plugin-dir", "plugin"], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter });
+    expect(await run()).toBe(0);
+    writeFileSync(skillFile, "---\ndescription: route this\n---\nchanged body\n");
+    expect(await run()).toBe(0);
+    writeFileSync(skillFile, "---\ndescription: route differently\n---\nchanged body\n");
+    expect(await run()).toBe(0);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("reports the cost saved by cached cases", async () => {
+    const file = writeCases("saved.json", { cases: [{ query: "q", expect: ["find-bug"] }] });
+    const cache = path.join(tmp, "saved-cache.json");
+    const adapter = fakeAdapter({ q: { loaded: ["find-bug"], costUsd: 1.8 } });
+    expect(await main(["run", file, "--cache", cache], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter })).toBe(0);
+    const json = path.join(tmp, "saved-report.json");
+    const out = new Sink();
+    expect(await main(["run", file, "--cache", cache, "--json", json], { stdout: out, stderr: out, cwd: tmp }, { adapter })).toBe(0);
+    expect(JSON.parse(readFileSync(json, "utf8")).summary.savedUsd).toBe(1.8);
+    expect(out.text).toContain("cached (saved $1.80)");
   });
 
   it("counts only live cases in the header and gives cached JUnit cases no time", async () => {
@@ -1097,7 +1178,7 @@ describe("cli list", () => {
       { adapter: listAdapter({ skills: ["b", "a"], slashCommands: ["x"], error: null }, seen) });
     expect(code).toBe(0);
     expect(out.text).toBe("skills (2):\n  b\n  a\nother slash commands (1):\n  x\n");
-    expect(seen).toEqual([{ configDir: tmp, timeoutMs: 180_000 }]);
+    expect(seen).toEqual([{ configDir: tmp, pluginDirs: [], timeoutMs: 180_000 }]);
   });
 
   it("exits 2 when the agent reports an error", async () => {

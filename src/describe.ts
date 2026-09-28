@@ -64,7 +64,7 @@ export function commandNames(dir: string): string[] {
   return out;
 }
 
-export function loadSkillDocs(opts?: { home?: string; cwd?: string; configDir?: string }): SkillDoc[] {
+export function loadSkillDocs(opts?: { home?: string; cwd?: string; configDir?: string; pluginDirs?: string[] }): SkillDoc[] {
   const cwd = opts?.cwd ?? process.cwd();
   const byName = new Map<string, SkillDoc>();
   const roots = skillRoots(opts);
@@ -83,7 +83,12 @@ export function loadSkillDocs(opts?: { home?: string; cwd?: string; configDir?: 
     for (const [name, doc] of inRoot) byName.set(name, doc);
   }
   // plugin docs carry a `plugin:` prefix, so they never collide with the above
-  for (const doc of pluginDocs(roots[0] as string, cwd)) {
+  const sources = sourcePlugins(opts?.pluginDirs ?? []);
+  const sourceNames = new Set(sources.map((p) => p.plugin));
+  for (const doc of pluginDocs(pluginInstallPaths(opts).filter((p) => !sourceNames.has(p.plugin)))) {
+    if (!byName.has(doc.name)) byName.set(doc.name, doc);
+  }
+  for (const doc of pluginDocs(sources)) {
     if (!byName.has(doc.name)) byName.set(doc.name, doc);
   }
   return [...byName.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -177,16 +182,41 @@ function unquote(value: string): string {
 }
 
 /** Plugin skills and commands registered under the user config root. */
-function pluginDocs(configRoot: string, cwd: string): SkillDoc[] {
-  return enabledPlugins(configRoot, cwd).flatMap(({ plugin, installPath }) => {
+function pluginDocs(plugins: { plugin: string; installPath: string }[]): SkillDoc[] {
+  return plugins.flatMap(({ plugin, installPath }) => {
     const manifest = pluginManifest(installPath);
     return [...pluginSkillDocs(plugin, installPath, manifest), ...pluginCommandDocs(plugin, installPath, manifest)];
   });
 }
 
 /** The plugins Claude Code loads for cwd, with their install dirs. */
-export function pluginInstallPaths(opts?: { home?: string; cwd?: string; configDir?: string }): { plugin: string; installPath: string }[] {
-  return enabledPlugins(skillRoots(opts)[0] as string, opts?.cwd ?? process.cwd());
+export function pluginInstallPaths(opts?: { home?: string; cwd?: string; configDir?: string; pluginDirs?: string[] }): { plugin: string; installPath: string }[] {
+  const installed = enabledPlugins(skillRoots(opts)[0] as string, opts?.cwd ?? process.cwd());
+  const sources = sourcePlugins(opts?.pluginDirs ?? []);
+  const sourceNames = new Set(sources.map((p) => p.plugin));
+  return [...installed.filter((p) => !sourceNames.has(p.plugin)), ...sources];
+}
+
+export function sourcePlugins(dirs: string[]): { plugin: string; installPath: string }[] {
+  const out: { plugin: string; installPath: string }[] = [];
+  for (const dir of dirs) {
+    if (isFile(path.join(dir, ".claude-plugin", "plugin.json"))) out.push(sourcePlugin(dir));
+    else {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        // statSync follows directory symlinks, so a linked child plugin counts too.
+        const child = path.join(dir, entry.name);
+        try {
+          if (fs.statSync(child).isDirectory() && isFile(path.join(child, ".claude-plugin", "plugin.json"))) out.push(sourcePlugin(child));
+        } catch { /* not a readable plugin directory */ }
+      }
+    }
+  }
+  return out;
+}
+
+function sourcePlugin(installPath: string): { plugin: string; installPath: string } {
+  const name = pluginManifest(installPath)?.name;
+  return { plugin: typeof name === "string" && name.trim() !== "" ? name.trim() : path.basename(installPath), installPath };
 }
 
 function enabledPlugins(configRoot: string, cwd: string): { plugin: string; installPath: string }[] {
@@ -224,15 +254,29 @@ function disabledPlugins(configRoot: string): Set<string> {
 
 type Manifest = Record<string, unknown> | null;
 
+/** Manifest component paths: one string or an array of them, relative to the plugin root. */
+function manifestPaths(installPath: string, declared: unknown): string[] {
+  const list = typeof declared === "string" ? [declared] : Array.isArray(declared) ? declared : [];
+  return list.filter((s): s is string => typeof s === "string").map((rel) => path.resolve(installPath, rel));
+}
+
 function pluginSkillDocs(plugin: string, installPath: string, manifest: Manifest): SkillDoc[] {
-  const declared = manifest?.skills;
-  const dirs = Array.isArray(declared)
-    ? declared.filter((s): s is string => typeof s === "string").map((rel) => path.resolve(installPath, rel))
-    : skillDirNames(path.join(installPath, "skills")).map((name) => path.join(installPath, "skills", name));
+  // `skills` adds to the default skills/ scan; each entry holds <name>/SKILL.md dirs or SKILL.md itself
+  const defaultDir = path.join(installPath, "skills");
+  const declared = manifestPaths(installPath, manifest?.skills);
+  const dirs: string[] = [];
+  for (const root of [defaultDir, ...declared]) {
+    if (isFile(path.join(root, "SKILL.md"))) dirs.push(root);
+    else dirs.push(...skillDirNames(root).map((name) => path.join(root, name)));
+  }
+  // a bare SKILL.md at the root is a single-skill plugin
+  if (dirs.length === 0 && declared.length === 0 && !isDir(defaultDir) && isFile(path.join(installPath, "SKILL.md"))) dirs.push(installPath);
   const out: SkillDoc[] = [];
+  const seen = new Set<string>();
   for (const dir of dirs) {
     const file = path.join(dir, "SKILL.md");
-    if (!isFile(file)) continue;
+    if (!isFile(file) || seen.has(file)) continue;
+    seen.add(file);
     const fm = readFrontmatter(file);
     const name = fm.name !== undefined && fm.name.trim() !== "" ? fm.name.trim() : path.basename(dir);
     out.push({ name: `${plugin}:${name}`, kind: "skill", file, description: describeFrom(fm), plugin });
@@ -242,20 +286,30 @@ function pluginSkillDocs(plugin: string, installPath: string, manifest: Manifest
 
 function pluginCommandDocs(plugin: string, installPath: string, manifest: Manifest): SkillDoc[] {
   const declared = manifest?.commands;
-  let files: string[];
-  if (Array.isArray(declared)) {
-    files = [];
-    for (const entry of declared) {
-      if (typeof entry !== "string") continue;
-      const p = path.resolve(installPath, entry);
-      if (isFile(p)) {
-        if (p.endsWith(".md")) files.push(p);
-      } else {
-        files.push(...commandFiles(p));
-      }
+  // an object map names each command: { name: { source | content, description? } }
+  if (typeof declared === "object" && declared !== null && !Array.isArray(declared)) {
+    const manifestFile = path.join(installPath, ".claude-plugin", "plugin.json");
+    const out: SkillDoc[] = [];
+    for (const [name, raw] of Object.entries(declared)) {
+      if (typeof raw !== "object" || raw === null) continue;
+      const entry = raw as Record<string, unknown>;
+      const source = typeof entry.source === "string" ? path.resolve(installPath, entry.source) : null;
+      if (source === null && typeof entry.content !== "string") continue;
+      const file = source !== null && isFile(source) ? source : manifestFile;
+      const description = typeof entry.description === "string" ? entry.description : file === source ? readDescription(file) : "";
+      out.push({ name: `${plugin}:${name}`, kind: "command", file, description, plugin });
     }
-  } else {
-    files = commandFiles(path.join(installPath, "commands"));
+    return out;
+  }
+  // a path or an array replaces the default commands/ scan
+  const files: string[] = [];
+  const paths = declared === undefined ? [path.join(installPath, "commands")] : manifestPaths(installPath, declared);
+  for (const p of paths) {
+    if (isFile(p)) {
+      if (p.endsWith(".md")) files.push(p);
+    } else {
+      files.push(...commandFiles(p));
+    }
   }
   return files.map((file) => ({
     name: `${plugin}:${path.basename(file).replace(/\.md$/, "")}`,
@@ -287,6 +341,14 @@ function readJson(file: string): Record<string, unknown> | null {
 function isFile(p: string): boolean {
   try {
     return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isDir(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
   } catch {
     return false;
   }

@@ -52,6 +52,43 @@ describe("ClaudeAdapter", () => {
     expect(r.durationMs).toBeGreaterThanOrEqual(0);
   });
 
+  it("passes each plugin directory once to run, batch, and list", async () => {
+    const argsOut = path.join(tmp, "args.json");
+    const dirs = [path.join(tmp, "one"), path.join(tmp, "two")];
+    process.env.FAKE_ARGS_OUT = argsOut;
+    process.env.FAKE_FIXTURE = path.join(fixtures, "synthetic-garbage.jsonl");
+    await new ClaudeAdapter().run(opts({ pluginDirs: dirs }));
+    let seen = JSON.parse(readFileSync(argsOut, "utf8")) as { args: string[] };
+    expect(seen.args.filter((arg) => arg === "--plugin-dir")).toHaveLength(2);
+    expect(seen.args).toContain("--plugin-dir");
+    expect(seen.args).toContain(dirs[0]);
+    expect(seen.args).toContain(dirs[1]);
+
+    process.env.FAKE_FIXTURE = path.join(fixtures, "synthetic-batch.jsonl");
+    await new ClaudeAdapter().runBatch({ prompt: "p", schema: BATCH_SCHEMA, timeoutMs: 30_000, pluginDirs: dirs });
+    seen = JSON.parse(readFileSync(argsOut, "utf8")) as { args: string[] };
+    expect(seen.args.filter((arg) => arg === "--plugin-dir")).toHaveLength(2);
+
+    process.env.FAKE_FIXTURE = path.join(fixtures, "synthetic-init.jsonl");
+    await new ClaudeAdapter().listSkills({ timeoutMs: 30_000, pluginDirs: dirs });
+    seen = JSON.parse(readFileSync(argsOut, "utf8")) as { args: string[] };
+    expect(seen.args.filter((arg) => arg === "--plugin-dir")).toHaveLength(2);
+
+    process.env.FAKE_ARGS_OUT = path.join(tmp, "plain-args.json");
+    await new ClaudeAdapter().run(opts());
+    seen = JSON.parse(readFileSync(process.env.FAKE_ARGS_OUT, "utf8")) as { args: string[] };
+    expect(seen.args).not.toContain("--plugin-dir");
+
+    process.env.FAKE_FIXTURE = path.join(fixtures, "synthetic-batch.jsonl");
+    await new ClaudeAdapter().runBatch({ prompt: "p", schema: BATCH_SCHEMA, timeoutMs: 30_000 });
+    seen = JSON.parse(readFileSync(process.env.FAKE_ARGS_OUT, "utf8")) as { args: string[] };
+    expect(seen.args).not.toContain("--plugin-dir");
+    process.env.FAKE_FIXTURE = path.join(fixtures, "synthetic-init.jsonl");
+    await new ClaudeAdapter().listSkills({ timeoutMs: 30_000 });
+    seen = JSON.parse(readFileSync(process.env.FAKE_ARGS_OUT, "utf8")) as { args: string[] };
+    expect(seen.args).not.toContain("--plugin-dir");
+  });
+
   it("stops early and kills the process group when the fake hangs", async () => {
     process.env.FAKE_FIXTURE = path.join(fixtures, "synthetic-two-skills.jsonl");
     process.env.FAKE_HANG = "1";

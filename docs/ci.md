@@ -151,7 +151,7 @@ does not block unrelated pull requests, but it still shows in the comment.
 when nothing that affects its routing changed: the case itself, the frontmatter
 of any skill or command, `CLAUDE.md` files, the model, the timeout, the agent
 and its version. It does not work with `batch: true`. Failed and skipped cases
-always run again. Reused cases are marked cached and cost nothing.
+always run again. Reused cases are marked cached and cost nothing; the report shows what the cache saved.
 
 Editing a skill's body (everything after the frontmatter) does not invalidate
 the cache, since only descriptions and other frontmatter affect routing.
@@ -188,6 +188,17 @@ also read caches from the default branch.
 A failing case fails the step, so a step that reads the outputs needs
 `if: always()`. `skillcheck.xml` still works with `actions/upload-artifact`
 or a JUnit reporter action.
+
+### Testing a plugin
+
+Set the action's `plugin-dir` input to a plugin source directory. When it is
+empty, the action auto-detects `.claude-plugin/plugin.json` at the repository
+root. Plugin mode uses an empty isolated config directory, and cases refer to
+skills as `plugin:skill`. The `skills-dir` input is ignored in plugin mode.
+
+```yaml
+- uses: icntswm/skillcheck@v1
+```
 
 ### Only the skills a pull request touched
 

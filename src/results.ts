@@ -29,6 +29,7 @@ export interface SuiteReport {
     budgetUsd: number | null;
     budgetReached: boolean;
     cached?: number;
+    savedUsd?: number;
   };
   unavailable: string[];
   confusion: ConfusionPair[];
@@ -94,6 +95,8 @@ export function buildReport(input: ReportInput): SuiteReport {
   const verdicts = input.cases.flatMap((e, i) => input.cached?.[i] ? [] : (e.result?.runs ?? []));
   const costs = [...verdicts.map((v) => v.costUsd), ...(input.skippedRunCosts ?? [])];
   const known = costs.filter((c): c is number => c !== null);
+  const cachedCount = input.cached?.filter(Boolean).length ?? 0;
+  const savedUsd = input.cases.reduce((sum, e, i) => input.cached?.[i] ? sum + (e.result?.runs ?? []).reduce((n, r) => n + (r.costUsd ?? 0), 0) : sum, 0);
   const cases = input.cases.map((e, i) => toCaseReport(e, input.cached?.[i] ?? false));
   const comparison = input.baseline ? compare(cases, input.baseline, input.baselineFile ?? input.baseline.file, input.suiteCases ?? cases) : null;
   return {
@@ -116,7 +119,8 @@ export function buildReport(input: ReportInput): SuiteReport {
       diagnoses: verdicts.filter((v) => v.diagnosis).length,
       budgetUsd: input.budgetUsd,
       budgetReached: input.budgetReached,
-      cached: input.cached?.filter(Boolean).length ?? 0,
+      cached: cachedCount,
+      ...(cachedCount > 0 ? { savedUsd } : {}),
     },
     unavailable: input.unavailable,
     confusion: input.confusion,

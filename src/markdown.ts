@@ -58,12 +58,16 @@ export function toMarkdown(report: SuiteReport): string {
 function header(report: SuiteReport): string {
   const s = report.summary;
   if (s.failed === 0 && s.skipped === 0) {
-    return `### ✅ skillcheck: ${s.cases} passed${(s.cached ?? 0) > 0 ? `, ${s.cached} cached` : ""}`;
+    return `### ✅ skillcheck: ${s.cases} passed${cachedText(s)}`;
   }
   const failedPart = s.failed > 0 ? `${s.failed} failed` : null;
   const skippedPart = s.skipped > 0 ? `${s.skipped} skipped` : null;
   const parts = [failedPart, skippedPart].filter((p): p is string => p !== null).join(", ");
-  return `### ❌ skillcheck: ${parts} of ${s.cases}${(s.cached ?? 0) > 0 ? `, ${s.cached} cached` : ""}`;
+  return `### ❌ skillcheck: ${parts} of ${s.cases}${cachedText(s)}`;
+}
+
+function cachedText(s: SuiteReport["summary"]): string {
+  return (s.cached ?? 0) > 0 ? `, ${s.cached} cached${(s.savedUsd ?? 0) > 0 ? ` (saved $${s.savedUsd?.toFixed(2)})` : ""}` : "";
 }
 
 /** Model, batch flag, runs, cost and duration, " · " separated. */

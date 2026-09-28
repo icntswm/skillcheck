@@ -88,6 +88,8 @@ export function routingContext(
     kind: doc.kind,
     name: doc.name,
     plugin: doc.plugin,
+    // inline manifest commands have no frontmatter of their own
+    description: doc.description,
     frontmatter: rawFrontmatter(readFile, doc.file),
   }));
   for (const root of roots) {

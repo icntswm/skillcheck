@@ -22,7 +22,7 @@ import {
   type Suite,
 } from "./cases.js";
 import { confusion } from "./confusion.js";
-import { loadSkillDocs, pluginInstallPaths, skillRoots, type SkillDoc } from "./describe.js";
+import { loadSkillDocs, pluginInstallPaths, skillRoots, sourcePlugins, type SkillDoc } from "./describe.js";
 import { GEN_SCHEMA, buildGenPrompt, caseEntry, genSuite, orderCases, parseGenAnswer, type GenCase } from "./gen.js";
 import { aggregate, judge, type CaseResult, type RunVerdict } from "./judge.js";
 import { evalSetToSuite, type ImportedSuite } from "./import.js";
@@ -80,6 +80,8 @@ list/init options:
       --timeout <sec>    per-call timeout (same default as run)
       --config-dir <dir> claude config dir: run/check/lint/list/init use it instead of
                          CLAUDE_CONFIG_DIR; run, list and init also set it for the agent
+      --plugin-dir <dir> plugin source directory (repeatable); run/check/lint/list/init/gen
+                         load plugins from it for this session
 init options:
       --force            overwrite an existing file
 import options:
@@ -134,6 +136,7 @@ const OPTIONS = {
   overlap: { type: "string" },
   strict: { type: "boolean", default: false },
   "config-dir": { type: "string" },
+  "plugin-dir": { type: "string", multiple: true },
   force: { type: "boolean", default: false },
   out: { type: "string", short: "o" },
   "per-skill": { type: "string" },
@@ -141,7 +144,7 @@ const OPTIONS = {
   append: { type: "string" },
 } satisfies ParseArgsOptionsConfig;
 
-type Values = { [K in keyof typeof OPTIONS]: (typeof OPTIONS)[K]["type"] extends "boolean" ? boolean : string | undefined };
+type Values = { [K in keyof typeof OPTIONS]: (typeof OPTIONS)[K]["type"] extends "boolean" ? boolean : string | undefined } & { "plugin-dir": string[] | undefined };
 
 export interface Io {
   stdout: ReportStream;
@@ -181,6 +184,7 @@ interface Flags {
   overlap: number;
   strict: boolean;
   configDir?: string;
+  pluginDirs: string[];
   force: boolean;
   out?: string;
   perSkill: number;
@@ -228,10 +232,19 @@ function parseFlags(values: Values, cwd: string): Flags {
     overlap: ratioFlag(values.overlap) ?? 0.3,
     strict: values.strict,
     configDir: values["config-dir"] !== undefined ? resolveConfigDir(values["config-dir"], cwd) : undefined,
+    pluginDirs: (values["plugin-dir"] ?? []).map((dir) => resolvePluginDir(dir, cwd)),
     force: values.force,
     out: values.out,
     perSkill: intFlag(values["per-skill"], "per-skill", 1) ?? 4,
   };
+}
+
+function resolvePluginDir(raw: string, cwd: string): string {
+  const abs = path.resolve(cwd, raw);
+  let isDir = false;
+  try { isDir = fs.statSync(abs).isDirectory(); } catch { /* missing */ }
+  if (!isDir) throw new UsageError(`--plugin-dir is not a directory: ${abs}`);
+  return abs;
 }
 
 /** --config-dir: absolute, must be an existing directory. */
@@ -366,7 +379,7 @@ async function checkCommand(file: string, flags: Flags, io: Io): Promise<number>
   if (!suite) return 2;
   const cases = applySkillFilter(suite.cases, flags.skill);
   if (flags.nameCheck) {
-    const errors = unknownNames({ ...suite, cases }, knownSkillNames({ cwd: io.cwd, configDir: flags.configDir }));
+    const errors = unknownNames({ ...suite, cases }, knownSkillNames({ cwd: io.cwd, configDir: flags.configDir, pluginDirs: flags.pluginDirs }), new Set(sourcePlugins(flags.pluginDirs).map((p) => p.plugin)));
     if (errors.length > 0) {
       printConfigError(io.stderr, file, new ConfigError(errors));
       return 2;
@@ -385,7 +398,7 @@ async function lintCommand(positional: string | undefined, flags: Flags, io: Io)
   } else {
     suite = null;
   }
-  const docs = loadSkillDocs({ cwd: io.cwd, configDir: flags.configDir });
+  const docs = loadSkillDocs({ cwd: io.cwd, configDir: flags.configDir, pluginDirs: flags.pluginDirs });
   const report = lint(docs, suite, { top: flags.top, overlap: flags.overlap, minLength: LINT_DEFAULTS.minLength });
   printLint(io.stdout, report, docs, suite);
   if (flags.strict && (report.short.length || report.similar.length || report.far.length)) return 1;
@@ -399,7 +412,7 @@ async function listCommand(flags: Flags, io: Io, deps: { adapter?: AgentAdapter 
     io.stderr.write(`skillcheck: agent ${adapter.name} has no list mode\n`);
     return 2;
   }
-  const list = await adapter.listSkills({ configDir: flags.configDir, timeoutMs: flags.timeoutSec * 1000 });
+  const list = await adapter.listSkills({ configDir: flags.configDir, pluginDirs: flags.pluginDirs, timeoutMs: flags.timeoutSec * 1000 });
   if (list.error) {
     io.stderr.write(`skillcheck: ${list.error}\n`);
     return 2;
@@ -464,7 +477,7 @@ async function initCommand(
   let skills: string[] = [];
   let slashCommands: string[] = [];
   const list: SkillList | null = adapter.listSkills
-    ? await adapter.listSkills({ configDir: flags.configDir, timeoutMs: flags.timeoutSec * 1000 })
+    ? await adapter.listSkills({ configDir: flags.configDir, pluginDirs: flags.pluginDirs, timeoutMs: flags.timeoutSec * 1000 })
     : null;
   if (list && !list.error) {
     skills = list.skills;
@@ -473,7 +486,7 @@ async function initCommand(
     // a missing or failing agent must not block writing the starter file
     const why = list?.error ?? `agent ${adapter.name} has no list mode`;
     io.stderr.write(`note: could not ask the agent (${why}); listed skills found on disk\n`);
-    skills = [...knownSkillNames({ cwd: io.cwd, configDir: flags.configDir })].sort();
+    skills = [...knownSkillNames({ cwd: io.cwd, configDir: flags.configDir, pluginDirs: flags.pluginDirs })].sort();
   }
   try {
     fs.writeFileSync(file, initTemplate(flags.agent ?? "claude", skills, slashCommands));
@@ -523,7 +536,7 @@ function importCommand(positional: string | undefined, flags: Flags, io: Io): nu
 }
 
 async function genCommand(flags: Flags, io: Io, deps: { adapter?: AgentAdapter }): Promise<number> {
-  const docs = loadSkillDocs({ cwd: io.cwd, configDir: flags.configDir });
+  const docs = loadSkillDocs({ cwd: io.cwd, configDir: flags.configDir, pluginDirs: flags.pluginDirs });
   const byName = new Map(docs.map((doc) => [doc.name, doc]));
   const append = flags.append === undefined ? null : path.resolve(io.cwd, flags.append);
   const existing = append === null ? null : await loadCases(append, io);
@@ -571,6 +584,7 @@ async function genCommand(flags: Flags, io: Io, deps: { adapter?: AgentAdapter }
         model: flags.model,
         timeoutMs: flags.timeoutSec * 1000,
         configDir: flags.configDir,
+        pluginDirs: flags.pluginDirs,
       });
       if (result.error) {
         io.stderr.write(`skillcheck: gen failed for ${group.map((doc) => doc.name).join(", ")}: ${result.error}\n`);
@@ -793,10 +807,10 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
   }
   const selected = applySkillFilter(byOnly, flags.skill);
 
-  const docs = flags.cacheFile === undefined ? [] : loadSkillDocs({ cwd: io.cwd, configDir: flags.configDir });
+  const docs = flags.cacheFile === undefined ? [] : loadSkillDocs({ cwd: io.cwd, configDir: flags.configDir, pluginDirs: flags.pluginDirs });
   let context = "";
   if (flags.cacheFile !== undefined) {
-    const where = { cwd: io.cwd, configDir: flags.configDir };
+    const where = { cwd: io.cwd, configDir: flags.configDir, pluginDirs: flags.pluginDirs };
     const [userRoot, projectRoot] = skillRoots(where) as [string, string];
     // nested commands/ dirs, which loadSkillDocs does not list
     const roots = [
@@ -890,6 +904,7 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
       fixed: report.cases.filter((c) => c.change === "fixed").map((c) => `#${c.id ?? c.index}`),
     } : undefined,
     cached: report.summary.cached,
+    savedUsd: report.summary.savedUsd,
   });
   if (flags.batch) {
     // cases that only errored have no answer to confirm
@@ -976,6 +991,7 @@ async function runIndividually(
       timeoutMs: flags.timeoutSec * 1000,
       earlyStop: flags.earlyStop,
       configDir: flags.configDir,
+      pluginDirs: flags.pluginDirs,
     });
     fatal.note(r.error);
     if (r.availableSkills) {
@@ -1026,7 +1042,7 @@ async function runBatched(
     const active = job.chunk.filter((item) => job.round < item.runs.length);
     if (active.length === 0) return;
     const prompt = buildBatchPrompt(active.map((item, i) => ({ n: i + 1, query: item.c.query })));
-    const br = await runBatch({ prompt, schema: BATCH_SCHEMA, model, timeoutMs: flags.timeoutSec * 1000, configDir: flags.configDir });
+    const br = await runBatch({ prompt, schema: BATCH_SCHEMA, model, timeoutMs: flags.timeoutSec * 1000, configDir: flags.configDir, pluginDirs: flags.pluginDirs });
     const parsed = parseBatchAnswer(br.structured, br.text);
     const chunkError = br.error ?? parsed.error; // a chunk error is every case's error
     fatal.note(br.error);
