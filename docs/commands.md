@@ -80,6 +80,14 @@ skillcheck suggest <report.json> [--skill a,b] [-m <model>] [-j <n>] [--timeout 
 Reads a report made by `skillcheck run --json`, finds confused skills with
 descriptions on disk, and asks the model for bounded description edits. Review
 the suggestions, edit the descriptions, then rerun `skillcheck run` to confirm.
+Nothing is written to your files.
+
+The model sees the failing requests, what loaded instead, and up to five passing
+requests per skill that must keep working. Runs that errored or that the report
+diagnosed as a model limit are left out, and so are skills the agent could not
+see in that run: those need a setup fix, not a new description. The old text
+shown includes `when_to_use` when the skill has it; the suggestion is one
+`description` to replace both.
 
 | Option | Meaning |
 |---|---|

@@ -62,10 +62,13 @@ export function suggestEvidence(report: Pick<SuiteReport, "confusion" | "cases">
   for (const item of report.cases) {
     for (const target of wanted) {
       const evidence = out.get(target)!;
-      const failedRuns = item.runs.filter((run) => !run.ok && run.error === null);
+      // errors and diagnosed runs (model limits, see judge) say nothing about descriptions
+      const failedRuns = item.runs.filter((run) => !run.ok && !run.error && !run.diagnosis);
       // a target can fail a case by being expected, or by being loaded where a neighbour belonged
       const involved = mentioned(item, target, true) || failedRuns.some((run) => run.loaded.includes(target));
-      if (item.status === "failed" && involved && evidence.failing.length < 8) {
+      // a case can pass its threshold and still have failed runs behind a confusion pair
+      if (failedRuns.length > 0 && involved) {
+        if (evidence.failing.length >= 8) continue;
         const loaded = [...new Set(failedRuns.map((run) => JSON.stringify(run.loaded)))].map((list) => JSON.parse(list) as string[]);
         evidence.failing.push({ query: shortQuery(item.query), loaded });
       } else if (item.status === "passed" && mentioned(item, target, false) && evidence.keepWorking.length < 5) {

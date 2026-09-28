@@ -670,7 +670,11 @@ async function suggestCommand(positional: string | undefined, flags: Flags, io: 
   const confusedNames = [...new Set(suiteReport.confusion.flatMap((pair) => [
     ...pair.expected.split("|"), ...(pair.got === "(nothing)" ? [] : [pair.got]),
   ]))];
-  let targetNames = confusedNames.filter((name) => byName.has(name));
+  // the agent could not see these, so no description edit can help
+  const unavailable = new Set(Array.isArray(suiteReport.unavailable) ? suiteReport.unavailable : []);
+  const hidden = confusedNames.filter((name) => unavailable.has(name));
+  if (hidden.length > 0) io.stderr.write(`note: the agent did not see ${hidden.join(", ")} in that run; fix the setup, not the description\n`);
+  let targetNames = confusedNames.filter((name) => byName.has(name) && !unavailable.has(name));
   if (flags.skill !== undefined) {
     const names = flags.skill.split(",").map((name) => name.trim()).filter((name) => name !== "");
     const unknown = names.filter((name, i) => !byName.has(name) && names.indexOf(name) === i);
@@ -682,8 +686,15 @@ async function suggestCommand(positional: string | undefined, flags: Flags, io: 
     io.stderr.write(`nothing to suggest: the confused skills have no descriptions on disk (${confusedNames.join(", ")})\n`);
     return 0;
   }
-  const targets = targetNames.map((name) => byName.get(name)!);
   const evidence = suggestEvidence(suiteReport, targetNames);
+  const limitsOnly = targetNames.filter((name) => evidence.get(name)?.failing.length === 0);
+  if (limitsOnly.length > 0) io.stderr.write(`note: skipped ${limitsOnly.join(", ")}: no routing failures left after errors and diagnosed runs\n`);
+  targetNames = targetNames.filter((name) => !limitsOnly.includes(name));
+  if (targetNames.length === 0) {
+    io.stdout.write(`nothing to suggest: no routing failures a description could fix in ${positional}\n`);
+    return 0;
+  }
+  const targets = targetNames.map((name) => byName.get(name)!);
   const adapter = pickAdapter(flags.agent ?? "claude", io, deps);
   if (!adapter) return 2;
   if (!adapter.runBatch) throw new UsageError(`agent ${adapter.name} cannot suggest descriptions`);
@@ -723,13 +734,18 @@ async function suggestCommand(positional: string | undefined, flags: Flags, io: 
     const suggestion = bySkill.get(doc.name);
     return suggestion ? [{ ...suggestion, old: doc.description, file: path.relative(io.cwd, doc.file) || "." }] : [];
   });
+  if (suggestions.length === 0 && dropped === 0) {
+    // an empty answer is the model's verdict that the descriptions are fine
+    io.stdout.write(`no description changes suggested (cost $${cost})\n`);
+    return 0;
+  }
   if (suggestions.length === 0) {
     io.stderr.write(`skillcheck: suggest got no usable suggestions from the model (cost $${cost})\n`);
     return 2;
   }
   const json = suggestions.map((suggestion) => ({ skill: suggestion.skill, file: suggestion.file, old: suggestion.old, new: suggestion.description, reason: suggestion.reason }));
-  const payload = JSON.stringify({ file: positional, suggestions: json, costUsd: results.reduce((sum, result) => sum + (result?.costUsd ?? 0), 0) }, null, 2) + "\n";
-  const terminal = suggestions.map((suggestion) => `${suggestion.skill}  ${suggestion.file}\n  why: ${oneLine(suggestion.reason)}\n  - ${oneLine(suggestion.old)}\n  + ${oneLine(suggestion.description)}\n`).join("");
+  const payload = JSON.stringify({ file: positional, suggestions: json, costUsd: results.some((result) => result?.costUsd == null) ? null : results.reduce((sum, result) => sum + (result?.costUsd ?? 0), 0) }, null, 2) + "\n";
+  const terminal = suggestions.map((suggestion) => `${suggestion.skill}  ${suggestion.file}\n  why: ${flat(suggestion.reason)}\n  - ${flat(suggestion.old)}\n  + ${flat(suggestion.description)}\n`).join("");
   if (flags.json === "-") io.stdout.write(payload); else io.stdout.write(terminal);
   if (flags.json === "-") io.stderr.write(terminal);
   if (flags.json !== undefined && flags.json !== "-") writeReportFile(path.resolve(io.cwd, flags.json), payload, "--json");
@@ -737,6 +753,11 @@ async function suggestCommand(positional: string | undefined, flags: Flags, io: 
   if (dropped > 0) io.stderr.write(`note: dropped ${dropped} suggestions from the model\n`);
   io.stderr.write("edit the descriptions, then rerun skillcheck run to confirm\n");
   return 0;
+}
+
+/** Whitespace collapsed to one line, never cut: suggest output is meant to be copied. */
+function flat(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }
 
 function genCost(costs: (number | null)[]): string {
