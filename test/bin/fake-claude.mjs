@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 // Fake `claude` binary for adapter tests: prints a fixture stream and
 // behaves according to the FAKE_* environment variables.
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 
 if (process.env.FAKE_ARGS_OUT) {
+  // write then rename: a test that polls for the file and kills this process
+  // must never read it half-written
+  const tmp = `${process.env.FAKE_ARGS_OUT}.${process.pid}.tmp`;
   writeFileSync(
-    process.env.FAKE_ARGS_OUT,
+    tmp,
     JSON.stringify({
       args: process.argv.slice(2),
       cwd: process.cwd(),
@@ -13,6 +16,7 @@ if (process.env.FAKE_ARGS_OUT) {
       claudeConfigDir: process.env.CLAUDE_CONFIG_DIR ?? null,
     }),
   );
+  renameSync(tmp, process.env.FAKE_ARGS_OUT);
 }
 
 if (process.env.FAKE_STDERR) process.stderr.write(process.env.FAKE_STDERR);
