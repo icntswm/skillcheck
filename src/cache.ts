@@ -1,5 +1,6 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import type { Case } from "./cases.js";
 import type { SkillDoc } from "./describe.js";
 import type { CaseReport } from "./results.js";
@@ -15,6 +16,27 @@ export interface CacheFile {
   entries: CacheEntry[];
 }
 
+/** Nested command files, excluding top-level commands. */
+export function nestedCommandFiles(roots: string[]): string[] {
+  return roots.flatMap((root) => walkCommandFiles(path.join(root, "commands"), false)).sort();
+}
+
+function walkCommandFiles(dir: string, nested: boolean): string[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const files: string[] = [];
+  for (const entry of entries) {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) files.push(...walkCommandFiles(file, true));
+    else if (nested && entry.name.endsWith(".md") && entry.isFile()) files.push(file);
+  }
+  return files;
+}
+
 export interface FingerprintSettings {
   repeat: number;
   threshold: number;
@@ -26,14 +48,28 @@ export interface FingerprintSettings {
   agentVersion: string | null;
 }
 
-export function routingContext(docs: SkillDoc[], readFile: (file: string) => string = (file) => fs.readFileSync(file, "utf8")): string {
+export function routingContext(
+  docs: SkillDoc[],
+  readFile: (file: string) => string = (file) => fs.readFileSync(file, "utf8"),
+  roots: string[] = [],
+): string {
   const sorted = [...docs].sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name) || (a.plugin ?? "").localeCompare(b.plugin ?? ""));
-  return JSON.stringify(sorted.map((doc) => ({
+  const context: Record<string, unknown>[] = sorted.map((doc) => ({
     kind: doc.kind,
     name: doc.name,
     plugin: doc.plugin,
     frontmatter: rawFrontmatter(readFile, doc.file),
-  })));
+  }));
+  for (const [rootIndex, root] of roots.entries()) {
+    for (const file of nestedCommandFiles([root])) {
+      context.push({
+        kind: "command-file",
+        file: `${rootIndex}:${path.relative(root, file)}`,
+        frontmatter: rawFrontmatter(readFile, file),
+      });
+    }
+  }
+  return JSON.stringify(context);
 }
 
 function rawFrontmatter(readFile: (file: string) => string, file: string): string {
@@ -84,14 +120,30 @@ export function parseCache(text: string): CacheFile {
   if (!Array.isArray(value.entries)) throw new Error("entries must be an array");
   const entries: CacheEntry[] = [];
   for (const entry of value.entries) {
+    const passed = isObject(entry) && isObject(entry.case) ? entry.case.passed : undefined;
     if (!isObject(entry) || typeof entry.fingerprint !== "string" || !isObject(entry.case)
       || entry.case.status !== "passed" || typeof entry.case.query !== "string"
-      || !Array.isArray(entry.case.runs) || typeof entry.case.passed !== "number") {
+      || !Array.isArray(entry.case.runs) || entry.case.runs.length === 0
+      || !entry.case.runs.every(isValidRun)
+      || !Number.isInteger(passed) || (passed as number) <= 0 || (passed as number) > entry.case.runs.length) {
       throw new Error("entries have the wrong shape");
     }
     entries.push({ fingerprint: entry.fingerprint, case: entry.case as unknown as CaseReport });
   }
   return { tool: "skillcheck-cache", version: value.version, entries };
+}
+
+function isValidRun(value: unknown): boolean {
+  if (!isObject(value)) return false;
+  return typeof value.ok === "boolean"
+    && Array.isArray(value.loaded) && value.loaded.every((item) => typeof item === "string")
+    && typeof value.reason === "string"
+    && Array.isArray(value.reasons) && value.reasons.every((item) => typeof item === "string")
+    && (typeof value.costUsd === "number" || value.costUsd === null)
+    && (typeof value.error === "string" || value.error === null)
+    && typeof value.stoppedEarly === "boolean"
+    && typeof value.durationMs === "number"
+    && (typeof value.diagnosis === "string" || value.diagnosis === null);
 }
 
 export function mergeCache(old: CacheFile | null, fresh: CacheEntry[], keep: Set<string>, version: string): CacheFile {

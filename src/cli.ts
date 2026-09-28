@@ -22,7 +22,7 @@ import {
   type Suite,
 } from "./cases.js";
 import { confusion } from "./confusion.js";
-import { loadSkillDocs, type SkillDoc } from "./describe.js";
+import { loadSkillDocs, skillRoots, type SkillDoc } from "./describe.js";
 import { GEN_SCHEMA, buildGenPrompt, caseEntry, genSuite, orderCases, parseGenAnswer, type GenCase } from "./gen.js";
 import { aggregate, judge, type CaseResult, type RunVerdict } from "./judge.js";
 import { evalSetToSuite, type ImportedSuite } from "./import.js";
@@ -192,6 +192,9 @@ function parseFlags(values: Values, cwd: string): Flags {
   if (values["batch-size"] !== undefined && !values.batch) throw new UsageError("--batch-size requires --batch");
   if (values.batch && (values.directive !== undefined || values["no-early-stop"])) {
     throw new UsageError("--directive and --no-early-stop do not apply to --batch");
+  }
+  if (values.batch && values.cache !== undefined) {
+    throw new UsageError("--cache is not with --batch: a batch answer depends on the other cases in the call");
   }
   if (values["only-new-failures"] && values.baseline === undefined) {
     throw new UsageError("--only-new-failures requires --baseline");
@@ -791,8 +794,19 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
   const selected = applySkillFilter(byOnly, flags.skill);
 
   const docs = flags.cacheFile === undefined ? [] : loadSkillDocs({ cwd: io.cwd, configDir: flags.configDir });
-  const context = flags.cacheFile === undefined ? "" : routingContext(docs);
-  const agentVersion = flags.cacheFile === undefined || !adapter.version ? null : await adapter.version().catch(() => null);
+  const roots = flags.cacheFile === undefined ? [] : skillRoots({ cwd: io.cwd, configDir: flags.configDir });
+  const context = flags.cacheFile === undefined ? "" : routingContext(docs, undefined, roots);
+  let canReuseCache = true;
+  let agentVersion: string | null = null;
+  if (flags.cacheFile !== undefined && adapter.version) {
+    try {
+      agentVersion = await adapter.version();
+      if (agentVersion === null) canReuseCache = false;
+    } catch {
+      canReuseCache = false;
+    }
+    if (!canReuseCache) io.stderr.write("note: cannot read the agent version, running every case\n");
+  }
   const settings = { repeat, threshold, agent, model: model ?? null, batch: flags.batch, directive, earlyStop: flags.earlyStop, agentVersion };
   const fingerprints = new Map<number, string>();
   for (const c of suite.cases) fingerprints.set(c.index, caseFingerprint(c, { ...settings, repeat: c.repeat ?? repeat, threshold: c.threshold ?? threshold }, context));
@@ -801,7 +815,7 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
   const items: PlanItem[] = selected.map((c, i) => {
     const n = c.repeat ?? repeat;
     const fingerprint = fingerprints.get(c.index) as string;
-    const cached = cachedEntries.get(fingerprint);
+    const cached = canReuseCache ? cachedEntries.get(fingerprint) : undefined;
     const cachedResult = cached?.case.status === "passed" && Array.isArray(cached.case.runs)
       ? { case: c, runs: cached.case.runs, passed: cached.case.passed, ok: true, threshold: c.threshold ?? threshold }
       : undefined;
@@ -891,8 +905,11 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
   if (flags.markdown !== undefined) writeReportFile(flags.markdown, toMarkdown(report), "--markdown");
 
   if (flags.cacheFile !== undefined) {
-    const fresh: CacheEntry[] = report.cases.flatMap((c, i) => c.status === "passed" ? [{ fingerprint: items[i]?.fingerprint as string, case: c }] : []);
-    const cache = mergeCache(oldCache, fresh, new Set(fingerprints.values()), readVersion());
+    const unusable = new Set(report.cases.flatMap((c, i) => c.status !== "passed" ? [items[i]?.fingerprint as string] : []));
+    const fresh: CacheEntry[] = report.cases.flatMap((c, i) => c.status === "passed" && !unusable.has(items[i]?.fingerprint as string)
+      ? [{ fingerprint: items[i]?.fingerprint as string, case: c }] : []);
+    const keep = new Set([...fingerprints.values()].filter((fingerprint) => !unusable.has(fingerprint)));
+    const cache = mergeCache(oldCache, fresh, keep, readVersion());
     try {
       fs.writeFileSync(cachePath as string, JSON.stringify(cache, null, 2) + "\n");
     } catch (e) {

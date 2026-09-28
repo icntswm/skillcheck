@@ -141,7 +141,9 @@ runs:
         # a pinned version older than 1.1.0 has no Markdown report
         # grep reads it all: with -q it would exit early and fail the pipe under pipefail
         if skillcheck --help | grep -- --markdown > /dev/null; then args+=(--markdown "$RUNNER_TEMP/skillcheck.md"); fi
-        if [ -n "$CACHE" ]; then
+        if [ "$BATCH" = "true" ] && [ -n "$CACHE" ]; then
+          echo "::warning::cache is ignored with batch: true"
+        elif [ -n "$CACHE" ]; then
           if skillcheck --help | grep -- --cache > /dev/null; then
             args+=(--cache "$CACHE")
           else

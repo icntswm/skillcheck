@@ -163,7 +163,7 @@ purpose:
 | `--markdown <path>` | a summary for a pull request comment or job summary |
 | `--baseline <path>` | an earlier `--json` report: marks each case regressed, fixed or new |
 | `--only-new-failures` | with `--baseline`: exit 1 only for regressed or new failing cases, or cases the budget skipped |
-| `--cache <path>` | reuse passed results whose case, skills and model did not change; updated after the run |
+| `--cache <path>` | reuse passed results whose case, skills and model did not change; updated after the run; not with `--batch` |
 
 What the reports contain and how to compare with `main` in CI:
 [Reports and CI](ci.md).

@@ -372,6 +372,37 @@ describe("cli run", () => {
     expect(JSON.parse(readFileSync(cache, "utf8")).tool).toBe("skillcheck-cache");
   });
 
+  it("does not cache a shared fingerprint when an identical case fails", async () => {
+    const file = writeCases("cases.json", { cases: [
+      { id: "pass", note: "first", query: "q", expect: ["find-bug"] },
+      { id: "fail", note: "second", query: "q", expect: ["find-bug"] },
+    ] });
+    const cache = path.join(tmp, "cache.json");
+    let call = 0;
+    const calls: RunOptions[] = [];
+    const adapter = fakeAdapter({}, calls);
+    adapter.run = async (opts) => {
+      calls.push(opts);
+      return { ...okRun, loaded: call++ === 0 ? ["find-bug"] : [] };
+    };
+    expect(await main(["run", file, "--cache", cache], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter })).toBe(1);
+    expect(JSON.parse(readFileSync(cache, "utf8")).entries).toHaveLength(0);
+    expect(await main(["run", file, "--cache", cache], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter })).toBe(1);
+    expect(calls).toHaveLength(4);
+  });
+
+  it("does not reuse when the agent version cannot be read", async () => {
+    const file = writeCases("cases.json", { cases: [{ query: "q", expect: ["find-bug"] }] });
+    const cache = path.join(tmp, "cache.json");
+    const calls: RunOptions[] = [];
+    const adapter = { ...fakeAdapter({ q: { loaded: ["find-bug"] } }, calls), version: async () => null };
+    expect(await main(["run", file, "--cache", cache], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter })).toBe(0);
+    const out = new Sink();
+    expect(await main(["run", file, "--cache", cache], { stdout: out, stderr: out, cwd: tmp }, { adapter })).toBe(0);
+    expect(calls).toHaveLength(2);
+    expect(out.text).toContain("note: cannot read the agent version, running every case");
+  });
+
   it("invalidates routing cache entries only when frontmatter changes", async () => {
     const skill = path.join(tmp, ".claude", "skills", "project-skill");
     const config = path.join(tmp, "empty-config");
@@ -406,30 +437,11 @@ describe("cli run", () => {
     expect(JSON.parse(readFileSync(cache, "utf8")).entries).toHaveLength(2);
   });
 
-  it("leaves cached cases out of batch prompts and does not reuse batch cache in normal mode", async () => {
-    const file = writeCases("cases.json", { cases: [
-      { query: "q1", expect: ["find-bug"] }, { query: "q2", expect: ["find-bug"] },
-    ] });
-    const cache = path.join(tmp, "cache.json");
-    const batchCalls: BatchOptions[] = [];
-    const batch = (calls: BatchOptions[]): AgentAdapter => ({
-      name: "claude",
-      async run(): Promise<RunResult> { throw new Error("unexpected normal call"); },
-      async runBatch(opts: BatchOptions): Promise<BatchResult> {
-        calls.push(opts);
-        return { structured: { answers: [{ n: 1, skills: ["find-bug"] }, { n: 2, skills: ["find-bug"] }] }, text: "", costUsd: 0.01, error: null, durationMs: 1 };
-      },
-    });
-    expect(await main(["run", file, "--batch", "--cache", cache], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter: batch(batchCalls) })).toBe(0);
-    writeFileSync(file, JSON.stringify({ cases: [{ query: "q1", expect: ["find-bug"] }, { query: "q2", expect: ["other"] }] }));
-    const secondCalls: BatchOptions[] = [];
-    expect(await main(["run", file, "--batch", "--cache", cache], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter: batch(secondCalls) })).toBe(1);
-    expect(secondCalls).toHaveLength(1);
-    expect(secondCalls[0]?.prompt).toContain('1. "q2"');
-    expect(secondCalls[0]?.prompt).not.toContain('"q1"');
-    const normalCalls: RunOptions[] = [];
-    expect(await main(["run", file, "--cache", cache], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter: fakeAdapter({ q1: { loaded: ["find-bug"] }, q2: { loaded: ["other"] } }, normalCalls) })).toBe(0);
-    expect(normalCalls).toHaveLength(2);
+  it("rejects cache with batch", async () => {
+    const file = writeCases("cases.json", { cases: [{ query: "q", expect: ["find-bug"] }] });
+    const out = new Sink();
+    expect(await main(["run", file, "--batch", "--cache", "cache.json"], { stdout: out, stderr: out, cwd: tmp }, { adapter: fakeAdapter({}) })).toBe(2);
+    expect(out.text).toContain("--cache is not with --batch: a batch answer depends on the other cases in the call");
   });
 });
 
