@@ -208,7 +208,7 @@ What the reports contain and how to compare with `main` in CI:
 
 | Code | Meaning |
 |---|---|
-| 0 | all cases passed (`lint`: always, unless `--strict` finds something) |
+| 0 | all cases passed (`lint`: always, unless `--strict` finds something; `gen`, `suggest`: done, even with nothing to suggest) |
 | 1 | some case failed or was skipped by the budget |
 | 2 | config or environment error, or the agent cannot run (not logged in) |
 
