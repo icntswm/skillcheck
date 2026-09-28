@@ -23,9 +23,22 @@ call finds both misrouted requests.</sub>
 Needs Node 20+ and [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 (`claude`) in `PATH`, logged in.
 
+**Install** to keep the `skillcheck` command:
+
 ```sh
 npm install -g @icntswm/skillcheck
+```
 
+**Or run without installing** with `npx`, writing `npx @icntswm/skillcheck`
+wherever this README says `skillcheck`:
+
+```sh
+npx @icntswm/skillcheck@latest lint   # downloads to npm's cache and runs; @latest skips a stale cache
+```
+
+Then:
+
+```sh
 skillcheck init               # skillcheck.yaml listing your skills; add real requests
 skillcheck lint               # free static checks, no model calls
 skillcheck run --batch        # cheap pre-check: one call per 25 cases
@@ -54,7 +67,7 @@ your skill descriptions, for you to review. After `skillcheck run --json report.
 `skillcheck suggest report.json` proposes description fixes from routing failures.
 Coming from Anthropic's
 skill-creator? `skillcheck import eval_set.json --skill <name>` converts its
-trigger eval set. To try without installing: `npx @icntswm/skillcheck lint`.
+trigger eval set.
 
 ## How it works
 
