@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { loadSkillDocs, type SkillDoc } from "../src/describe.js";
+import { loadSkillDocs, pluginInstallPaths, type SkillDoc } from "../src/describe.js";
 
 let tmp: string;
 
@@ -180,6 +180,15 @@ describe("loadSkillDocs plugins", () => {
     });
     registry(cfg, { "plain@mp": [{ scope: "user", installPath: plain }] });
     expect(names(load(cfg, base))).toEqual(["plain:cmd", "plain:one"]);
+  });
+
+  it("lists install paths of enabled plugins only", () => {
+    base = fs.mkdtempSync(path.join(tmp, "plug-paths-"));
+    const cfg = path.join(base, "cfg");
+    const on = plugin("on", {});
+    const off = plugin("off", {});
+    registry(cfg, { "on@mp": [{ scope: "user", installPath: on }], "off@mp": [{ scope: "user", installPath: off }] }, { enabledPlugins: { "off@mp": false } });
+    expect(pluginInstallPaths({ cwd: base, configDir: cfg })).toEqual([on]);
   });
 
   it("skips disabled plugins and project/local scopes for other paths", () => {

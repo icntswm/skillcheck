@@ -46,6 +46,7 @@ export interface FingerprintSettings {
   directive: string;
   earlyStop: boolean;
   agentVersion: string | null;
+  timeoutSec: number;
 }
 
 export function routingContext(
@@ -101,6 +102,7 @@ export function caseFingerprint(c: Case, settings: FingerprintSettings, context:
       batch: settings.batch,
       directive: settings.batch ? null : settings.directive,
       earlyStop: settings.batch ? null : settings.earlyStop,
+      timeoutSec: settings.timeoutSec,
     },
     agentVersion: settings.agentVersion,
     context,
@@ -125,7 +127,7 @@ export function parseCache(text: string): CacheFile {
       || entry.case.status !== "passed" || typeof entry.case.query !== "string"
       || !Array.isArray(entry.case.runs) || entry.case.runs.length === 0
       || !entry.case.runs.every(isValidRun)
-      || !Number.isInteger(passed) || (passed as number) <= 0 || (passed as number) > entry.case.runs.length) {
+      || !Number.isInteger(passed) || (passed as number) <= 0 || passed !== entry.case.runs.filter((run) => isObject(run) && run.ok === true).length) {
       throw new Error("entries have the wrong shape");
     }
     entries.push({ fingerprint: entry.fingerprint, case: entry.case as unknown as CaseReport });

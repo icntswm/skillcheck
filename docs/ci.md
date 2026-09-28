@@ -159,14 +159,14 @@ the cache, since only descriptions and other frontmatter affect routing.
 Editing any description, installing a plugin, or using a new Claude Code
 version reruns everything; the action installs the latest version by default,
 so pin it with `claude-code-version` when needed. If the version cannot be read,
-nothing is reused. The agent's default model is not part of the key: pin the
+nothing is reused and the cache file is left as is. The agent's default model is not part of the key: pin the
 model (`model` input, `--model` or the suite's `model`) when you use the cache.
 
 ```yaml
 - uses: actions/cache/restore@v4
   with:
     path: skillcheck-cache.json
-    key: skillcheck-cache-${{ github.run_id }}
+    key: skillcheck-cache-${{ github.run_id }}-${{ github.run_attempt }}
     restore-keys: skillcheck-cache-
 - uses: icntswm/skillcheck@v1
   env:
@@ -177,10 +177,11 @@ model (`model` input, `--model` or the suite's `model`) when you use the cache.
   uses: actions/cache/save@v4
   with:
     path: skillcheck-cache.json
-    key: skillcheck-cache-${{ github.run_id }}
+    key: skillcheck-cache-${{ github.run_id }}-${{ github.run_attempt }}
 ```
 
-The key uses `run_id`, so every run saves a fresh cache. The `restore-keys`
+The key uses `run_id` and `run_attempt`, so every run, a rerun too, saves a
+fresh cache. The `restore-keys`
 prefix picks the most recent cache available to the branch; pull requests can
 also read caches from the default branch.
 

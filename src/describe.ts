@@ -178,11 +178,23 @@ function unquote(value: string): string {
 
 /** Plugin skills and commands registered under the user config root. */
 function pluginDocs(configRoot: string, cwd: string): SkillDoc[] {
+  return enabledPlugins(configRoot, cwd).flatMap(({ plugin, installPath }) => {
+    const manifest = pluginManifest(installPath);
+    return [...pluginSkillDocs(plugin, installPath, manifest), ...pluginCommandDocs(plugin, installPath, manifest)];
+  });
+}
+
+/** Install dirs of the plugins Claude Code loads for cwd. */
+export function pluginInstallPaths(opts?: { home?: string; cwd?: string; configDir?: string }): string[] {
+  return enabledPlugins(skillRoots(opts)[0] as string, opts?.cwd ?? process.cwd()).map((p) => p.installPath);
+}
+
+function enabledPlugins(configRoot: string, cwd: string): { plugin: string; installPath: string }[] {
   const registry = readJson(path.join(configRoot, "plugins", "installed_plugins.json"));
   const plugins = registry?.plugins;
   if (typeof plugins !== "object" || plugins === null) return [];
   const disabled = disabledPlugins(configRoot);
-  const out: SkillDoc[] = [];
+  const out: { plugin: string; installPath: string }[] = [];
   for (const [key, entries] of Object.entries(plugins)) {
     if (disabled.has(key)) continue;
     if (!Array.isArray(entries)) continue;
@@ -194,8 +206,7 @@ function pluginDocs(configRoot: string, cwd: string): SkillDoc[] {
       if (entry.scope !== "user" && !(scoped && entry.projectPath === cwd)) continue;
       const installPath = entry.installPath;
       if (typeof installPath !== "string" || installPath === "") continue;
-      const manifest = pluginManifest(installPath);
-      out.push(...pluginSkillDocs(plugin, installPath, manifest), ...pluginCommandDocs(plugin, installPath, manifest));
+      out.push({ plugin, installPath });
     }
   }
   return out;

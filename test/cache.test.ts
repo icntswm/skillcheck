@@ -11,7 +11,7 @@ const base: Case = {
 };
 const settings = {
   repeat: 1, threshold: 1, agent: "claude", model: "sonnet", batch: false,
-  directive: "stop", earlyStop: true, agentVersion: "1.0",
+  directive: "stop", earlyStop: true, agentVersion: "1.0", timeoutSec: 180,
 };
 const docs = [
   { name: "z", kind: "skill" as const, file: "z", description: "z", plugin: null },
@@ -31,6 +31,7 @@ describe("result cache", () => {
     expect(caseFingerprint(base, { ...settings, batch: true }, context)).not.toBe(caseFingerprint(base, settings, context));
     expect(caseFingerprint(base, { ...settings, directive: "other" }, context)).not.toBe(caseFingerprint(base, settings, context));
     expect(caseFingerprint(base, { ...settings, agentVersion: "2.0" }, context)).not.toBe(caseFingerprint(base, settings, context));
+    expect(caseFingerprint(base, { ...settings, timeoutSec: 60 }, context)).not.toBe(caseFingerprint(base, settings, context));
     expect(caseFingerprint(base, settings, context.replace("body", "changed"))).toBe(caseFingerprint(base, settings, context));
     expect(caseFingerprint(base, settings, context.replace("description: z", "description: changed"))).not.toBe(caseFingerprint(base, settings, context));
   });
@@ -47,6 +48,7 @@ describe("result cache", () => {
     const valid = { tool: "skillcheck-cache", version: "1", entries: [{ fingerprint: "x", case: { ...report, runs: [validRun], passed: 1 } }] };
     expect(() => parseCache(JSON.stringify({ ...valid, entries: [{ ...valid.entries[0]!, case: { ...valid.entries[0]!.case, runs: [null] } }] }))).toThrow("entries have the wrong shape");
     expect(() => parseCache(JSON.stringify({ ...valid, entries: [{ ...valid.entries[0]!, case: { ...valid.entries[0]!.case, runs: [], passed: 1 } }] }))).toThrow("entries have the wrong shape");
+    expect(() => parseCache(JSON.stringify({ ...valid, entries: [{ ...valid.entries[0]!, case: { ...valid.entries[0]!.case, runs: [{ ...validRun, ok: false }] } }] }))).toThrow("entries have the wrong shape");
   });
 
   it("includes nested command frontmatter but not body in routing context", () => {

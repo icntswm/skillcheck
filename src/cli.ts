@@ -22,7 +22,7 @@ import {
   type Suite,
 } from "./cases.js";
 import { confusion } from "./confusion.js";
-import { loadSkillDocs, skillRoots, type SkillDoc } from "./describe.js";
+import { loadSkillDocs, pluginInstallPaths, skillRoots, type SkillDoc } from "./describe.js";
 import { GEN_SCHEMA, buildGenPrompt, caseEntry, genSuite, orderCases, parseGenAnswer, type GenCase } from "./gen.js";
 import { aggregate, judge, type CaseResult, type RunVerdict } from "./judge.js";
 import { evalSetToSuite, type ImportedSuite } from "./import.js";
@@ -794,7 +794,8 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
   const selected = applySkillFilter(byOnly, flags.skill);
 
   const docs = flags.cacheFile === undefined ? [] : loadSkillDocs({ cwd: io.cwd, configDir: flags.configDir });
-  const roots = flags.cacheFile === undefined ? [] : skillRoots({ cwd: io.cwd, configDir: flags.configDir });
+  // nested commands/ dirs, which loadSkillDocs does not list
+  const roots = flags.cacheFile === undefined ? [] : [...skillRoots({ cwd: io.cwd, configDir: flags.configDir }), ...pluginInstallPaths({ cwd: io.cwd, configDir: flags.configDir })];
   const context = flags.cacheFile === undefined ? "" : routingContext(docs, undefined, roots);
   let canReuseCache = true;
   let agentVersion: string | null = null;
@@ -805,9 +806,9 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
     } catch {
       canReuseCache = false;
     }
-    if (!canReuseCache) io.stderr.write("note: cannot read the agent version, running every case\n");
+    if (!canReuseCache) io.stderr.write("note: cannot read the agent version, running every case, cache left as is\n");
   }
-  const settings = { repeat, threshold, agent, model: model ?? null, batch: flags.batch, directive, earlyStop: flags.earlyStop, agentVersion };
+  const settings = { repeat, threshold, agent, model: model ?? null, batch: flags.batch, directive, earlyStop: flags.earlyStop, agentVersion, timeoutSec: flags.timeoutSec };
   const fingerprints = new Map<number, string>();
   for (const c of suite.cases) fingerprints.set(c.index, caseFingerprint(c, { ...settings, repeat: c.repeat ?? repeat, threshold: c.threshold ?? threshold }, context));
   const cachedEntries = new Map((oldCache?.entries ?? []).map((entry) => [entry.fingerprint, entry]));
@@ -904,7 +905,8 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
   if (flags.junit !== undefined) writeReportFile(flags.junit, toJunit(report), "--junit");
   if (flags.markdown !== undefined) writeReportFile(flags.markdown, toMarkdown(report), "--markdown");
 
-  if (flags.cacheFile !== undefined) {
+  // an unknown version would key every entry to null and drop the good ones
+  if (flags.cacheFile !== undefined && canReuseCache) {
     const unusable = new Set(report.cases.flatMap((c, i) => c.status !== "passed" ? [items[i]?.fingerprint as string] : []));
     const fresh: CacheEntry[] = report.cases.flatMap((c, i) => c.status === "passed" && !unusable.has(items[i]?.fingerprint as string)
       ? [{ fingerprint: items[i]?.fingerprint as string, case: c }] : []);

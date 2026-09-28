@@ -395,12 +395,18 @@ describe("cli run", () => {
     const file = writeCases("cases.json", { cases: [{ query: "q", expect: ["find-bug"] }] });
     const cache = path.join(tmp, "cache.json");
     const calls: RunOptions[] = [];
-    const adapter = { ...fakeAdapter({ q: { loaded: ["find-bug"] } }, calls), version: async () => null };
-    expect(await main(["run", file, "--cache", cache], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter })).toBe(0);
+    const known = { ...fakeAdapter({ q: { loaded: ["find-bug"] } }, calls), version: async () => "1.0" };
+    expect(await main(["run", file, "--cache", cache], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter: known })).toBe(0);
+    const before = readFileSync(cache, "utf8");
     const out = new Sink();
-    expect(await main(["run", file, "--cache", cache], { stdout: out, stderr: out, cwd: tmp }, { adapter })).toBe(0);
+    const unknown = { ...known, version: async () => null };
+    expect(await main(["run", file, "--cache", cache], { stdout: out, stderr: out, cwd: tmp }, { adapter: unknown })).toBe(0);
     expect(calls).toHaveLength(2);
-    expect(out.text).toContain("note: cannot read the agent version, running every case");
+    expect(out.text).toContain("note: cannot read the agent version, running every case, cache left as is");
+    // the entry keyed by the known version survives
+    expect(readFileSync(cache, "utf8")).toBe(before);
+    expect(await main(["run", file, "--cache", cache], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter: known })).toBe(0);
+    expect(calls).toHaveLength(2);
   });
 
   it("invalidates routing cache entries only when frontmatter changes", async () => {
