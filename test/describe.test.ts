@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { loadSkillDocs, pluginInstallPaths, type SkillDoc } from "../src/describe.js";
+import { loadSkillDocs, pluginInstallPaths, sourcePlugins, type SkillDoc } from "../src/describe.js";
 
 let tmp: string;
 
@@ -170,6 +170,35 @@ describe("loadSkillDocs plugins", () => {
     expect(byName(docs, "demo:hello")?.file).toBe(path.join(demo, "custom", "renamed", "SKILL.md"));
   });
 
+  it("scans manifest skill roots next to skills/ and reads a command map", () => {
+    base = fs.mkdtempSync(path.join(tmp, "plug-roots-"));
+    const cfg = path.join(base, "cfg");
+    const roots = plugin("roots", {
+      ".claude-plugin/plugin.json": JSON.stringify({
+        name: "roots",
+        skills: "./custom",
+        commands: { about: { content: "About.", description: "Explain what this plugin does" }, run: { source: "./run.md" } },
+      }),
+      "skills/base/SKILL.md": "---\ndescription: Default folder skill still loads\n---\n",
+      "custom/foo/SKILL.md": "---\ndescription: Skill found under a custom root\n---\n",
+      "commands/ignored.md": "---\ndescription: Replaced by the manifest map\n---\n",
+      "run.md": "---\ndescription: Run the thing from a source file\n---\n",
+    });
+    registry(cfg, { "roots@mp": [{ scope: "user", installPath: roots }] });
+    const docs = load(cfg, base);
+    expect(names(docs)).toEqual(["roots:about", "roots:base", "roots:foo", "roots:run"]);
+    expect(byName(docs, "roots:about")?.description).toBe("Explain what this plugin does");
+    expect(byName(docs, "roots:run")?.description).toBe("Run the thing from a source file");
+  });
+
+  it("loads a plugin with only a root SKILL.md as one skill", () => {
+    base = fs.mkdtempSync(path.join(tmp, "plug-single-"));
+    const cfg = path.join(base, "cfg");
+    const single = plugin("single", { "SKILL.md": "---\nname: solo\ndescription: The only skill of this plugin\n---\n" });
+    registry(cfg, { "single@mp": [{ scope: "user", installPath: single }] });
+    expect(names(load(cfg, base))).toEqual(["single:solo"]);
+  });
+
   it("falls back to the default skills/ and commands/ layout without a manifest", () => {
     base = fs.mkdtempSync(path.join(tmp, "plug-default-"));
     const cfg = path.join(base, "cfg");
@@ -189,6 +218,49 @@ describe("loadSkillDocs plugins", () => {
     const off = plugin("off", {});
     registry(cfg, { "on@mp": [{ scope: "user", installPath: on }], "off@mp": [{ scope: "user", installPath: off }] }, { enabledPlugins: { "off@mp": false } });
     expect(pluginInstallPaths({ cwd: base, configDir: cfg })).toEqual([{ plugin: "on", installPath: on }]);
+  });
+
+  it("discovers source plugins by manifest name, basename fallback, collections, and symlink", () => {
+    base = fs.mkdtempSync(path.join(tmp, "plug-source-"));
+    const direct = plugin("direct", { ".claude-plugin/plugin.json": JSON.stringify({ name: "p" }) });
+    const collection = path.join(base, "collection");
+    const second = plugin("second", { ".claude-plugin/plugin.json": JSON.stringify({ name: "second-name" }) });
+    const unnamed = plugin("unnamed", { ".claude-plugin/plugin.json": JSON.stringify({}) });
+    fs.mkdirSync(collection, { recursive: true });
+    fs.symlinkSync(second, path.join(collection, "linked"), "dir");
+    fs.cpSync(unnamed, path.join(collection, "unnamed"), { recursive: true });
+    expect(sourcePlugins([direct, collection])).toEqual([
+      { plugin: "p", installPath: direct },
+      { plugin: "second-name", installPath: path.join(collection, "linked") },
+      { plugin: "unnamed", installPath: path.join(collection, "unnamed") },
+    ]);
+  });
+
+  it("loads source plugin skills and commands with descriptions", () => {
+    base = fs.mkdtempSync(path.join(tmp, "plug-source-docs-"));
+    const source = plugin("source", {
+      ".claude-plugin/plugin.json": JSON.stringify({ name: "p" }),
+      "skills/skill/SKILL.md": "---\ndescription: skill description\n---\nbody\n",
+      "commands/cmd.md": "---\ndescription: command description\n---\nbody\n",
+    });
+    const docs = loadSkillDocs({ cwd: base, configDir: path.join(base, "empty"), pluginDirs: [source] });
+    expect(byName(docs, "p:skill")).toMatchObject({ plugin: "p", description: "skill description" });
+    expect(byName(docs, "p:cmd")).toMatchObject({ plugin: "p", description: "command description" });
+    expect(pluginInstallPaths({ cwd: base, configDir: path.join(base, "empty"), pluginDirs: [source] })).toContainEqual({ plugin: "p", installPath: source });
+  });
+
+  it("source plugin of the same name replaces its installed docs", () => {
+    base = fs.mkdtempSync(path.join(tmp, "plug-source-replace-"));
+    const cfg = path.join(base, "cfg");
+    const installed = plugin("installed", { "skills/old/SKILL.md": "---\ndescription: installed\n---\n" });
+    const source = plugin("source", {
+      ".claude-plugin/plugin.json": JSON.stringify({ name: "p" }),
+      "skills/new/SKILL.md": "---\ndescription: source\n---\n",
+    });
+    registry(cfg, { "p@market": [{ scope: "user", installPath: installed }] });
+    const docs = withConfig(cfg, () => loadSkillDocs({ cwd: base, pluginDirs: [source] }));
+    expect(byName(docs, "p:new")?.description).toBe("source");
+    expect(byName(docs, "p:old")).toBeUndefined();
   });
 
   it("skips disabled plugins and project/local scopes for other paths", () => {

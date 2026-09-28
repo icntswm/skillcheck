@@ -15,6 +15,9 @@ inputs:
       Claude Code config dir, so the run sees only them. Empty uses the
       runner's own config.
     default: skills
+  plugin-dir:
+    description: Directory of a Claude Code plugin to test from source; empty auto-detects .claude-plugin/plugin.json at the repository root.
+    default: ""
   lint:
     description: Run the free lint step first.
     default: "true"
@@ -94,15 +97,27 @@ runs:
       run: npm install -g "@anthropic-ai/claude-code@$CC_VERSION" "@icntswm/skillcheck@$SC_VERSION"
 
     - name: config dir
-      if: inputs.skills-dir != ''
       shell: bash
       env:
         SKILLS_DIR: ${{ inputs.skills-dir }}
+        PLUGIN_DIR: ${{ inputs.plugin-dir }}
       run: |
         dir="$RUNNER_TEMP/skillcheck-config"
-        mkdir -p "$dir/skills"
-        cp -R "$SKILLS_DIR/." "$dir/skills/"
-        echo "SKILLCHECK_CONFIG_DIR=$dir" >> "$GITHUB_ENV"
+        if [ -n "$PLUGIN_DIR" ] || [ -f ".claude-plugin/plugin.json" ]; then
+          rm -rf "$dir"
+          mkdir -p "$dir"
+          echo "SKILLCHECK_CONFIG_DIR=$dir" >> "$GITHUB_ENV"
+          echo "SKILLCHECK_PLUGIN_DIR=${PLUGIN_DIR:-.}" >> "$GITHUB_ENV"
+        elif [ -n "$SKILLS_DIR" ]; then
+          mkdir -p "$dir/skills"
+          cp -R "$SKILLS_DIR/." "$dir/skills/"
+          echo "SKILLCHECK_CONFIG_DIR=$dir" >> "$GITHUB_ENV"
+          echo "SKILLCHECK_PLUGIN_DIR=" >> "$GITHUB_ENV"
+        else
+          # GITHUB_ENV lasts the whole job: clear what an earlier call of this action set
+          echo "SKILLCHECK_CONFIG_DIR=" >> "$GITHUB_ENV"
+          echo "SKILLCHECK_PLUGIN_DIR=" >> "$GITHUB_ENV"
+        fi
 
     - name: lint
       if: inputs.lint == 'true'
@@ -112,6 +127,9 @@ runs:
       run: |
         args=(lint "$FILE")
         [ -n "$SKILLCHECK_CONFIG_DIR" ] && args+=(--config-dir "$SKILLCHECK_CONFIG_DIR")
+        if [ -n "$SKILLCHECK_PLUGIN_DIR" ]; then
+          if skillcheck --help | grep -- --plugin-dir > /dev/null; then args+=(--plugin-dir "$SKILLCHECK_PLUGIN_DIR"); else echo "::warning::this skillcheck version has no --plugin-dir"; fi
+        fi
         skillcheck "${args[@]}"
 
     - name: run
@@ -131,6 +149,9 @@ runs:
       run: |
         args=(run "$FILE")
         [ -n "$SKILLCHECK_CONFIG_DIR" ] && args+=(--config-dir "$SKILLCHECK_CONFIG_DIR")
+        if [ -n "$SKILLCHECK_PLUGIN_DIR" ]; then
+          if skillcheck --help | grep -- --plugin-dir > /dev/null; then args+=(--plugin-dir "$SKILLCHECK_PLUGIN_DIR"); else echo "::warning::this skillcheck version has no --plugin-dir"; fi
+        fi
         [ "$BATCH" = "true" ] && args+=(--batch)
         [ -n "$MODEL" ] && args+=(--model "$MODEL")
         [ -n "$REPEAT" ] && args+=(--repeat "$REPEAT")

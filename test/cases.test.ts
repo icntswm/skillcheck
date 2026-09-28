@@ -264,4 +264,16 @@ describe("unknownNames", () => {
       '#2: unknown skill "gone" in first',
     ]);
   });
+
+  it("checks names for source plugins but preserves the installed-plugin skip", () => {
+    const suite = parseSuite({ cases: [
+      { query: "typo", expect: ["p:typo"] },
+      { query: "known", expect: ["p:skill"] },
+      { query: "installed", expect: ["other:x"] },
+    ] });
+    expect(unknownNames(suite, new Set(["p:skill"]), new Set(["p"]))).toEqual([
+      '#1: unknown skill "p:typo" in expect',
+    ]);
+    expect(unknownNames(suite, new Set(["p:skill"]))).toEqual([]);
+  });
 });

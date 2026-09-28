@@ -88,6 +88,17 @@ describe("toMarkdown", () => {
     expect(md).toContain("### ✅ skillcheck: 1 passed, 1 cached");
   });
 
+  it("shows saved cache cost only when positive", () => {
+    const report = buildReport({
+      file: "skillcheck.yaml", agent: "claude", model: "sonnet", startedAtMs: 0, durationMs: 0,
+      cases: [done(c1, [verdict(c1, { costUsd: 1.8 })])], unavailable: [], confusion: [], estimatedCostUsd: 0,
+      budgetUsd: null, budgetReached: false, cached: [true],
+    });
+    expect(toMarkdown(report)).toContain("1 cached (saved $1.80)");
+    const noCost = { ...report, summary: { ...report.summary, savedUsd: 0 } };
+    expect(toMarkdown(noCost)).not.toContain("(saved");
+  });
+
   it("renders baseline counts and change labels", () => {
     const c2 = kase({ index: 2, query: "fixed case" });
     const c3 = kase({ index: 3, query: "new case" });

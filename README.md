@@ -45,6 +45,9 @@ skillcheck run --only 2,5     # confirm what the batch flagged with real runs
 Every option, the default file lookup and exit codes are in
 [Commands](docs/commands.md).
 
+To test a plugin from its repository, use `--config-dir` with an empty
+directory and `--plugin-dir .`; cases name its skills as `plugin:skill`.
+
 No cases yet? `skillcheck gen -o skillcheck.yaml` lets the model draft them from
 your skill descriptions, for you to review. Coming from Anthropic's
 skill-creator? `skillcheck import eval_set.json --skill <name>` converts its

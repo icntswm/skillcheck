@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { commandNames, skillDirNames, skillRoots } from "./describe.js";
+import { commandNames, loadSkillDocs, skillDirNames, skillRoots } from "./describe.js";
 
 export interface Case {
   index: number; // 1-based position in file
@@ -217,24 +217,25 @@ export function findDefaultCasesFile(cwd: string): string | undefined {
 }
 
 /** Names of skills/commands discoverable on disk, plus built-in slash skills. */
-export function knownSkillNames(opts?: { home?: string; cwd?: string; configDir?: string }): Set<string> {
+export function knownSkillNames(opts?: { home?: string; cwd?: string; configDir?: string; pluginDirs?: string[] }): Set<string> {
   const out = new Set<string>(BUILTIN_SKILLS);
   for (const root of skillRoots(opts)) {
     for (const name of skillDirNames(path.join(root, "skills"))) out.add(name);
     for (const name of commandNames(path.join(root, "commands"))) out.add(name);
   }
+  for (const doc of loadSkillDocs(opts)) if (doc.plugin !== null) out.add(doc.name);
   return out;
 }
 
 const NAME_FIELDS = ["expect", "expect_any", "forbid", "first"] as const;
 
-export function unknownNames(suite: Suite, known: Set<string>): string[] {
+export function unknownNames(suite: Suite, known: Set<string>, sourcePlugins: Set<string> = new Set()): string[] {
   const errors: string[] = [];
   for (const c of suite.cases) {
     for (const field of NAME_FIELDS) {
       const names = field === "first" ? (c.first ? [c.first] : []) : c[field];
       for (const name of names) {
-        if (name.includes(":")) continue; // plugin skills are not checked
+        if (name.includes(":") && !sourcePlugins.has(name.slice(0, name.indexOf(":")))) continue; // installed plugin skills are not checked
         if (!known.has(name)) errors.push(`#${c.index}: unknown skill "${name}" in ${field}`);
       }
     }

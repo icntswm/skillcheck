@@ -79,6 +79,7 @@ export class Reporter {
       skippedRunCosts?: (number | null)[];
       baseline?: { summary: BaselineSummary; regressed: string[]; fixed: string[] };
       cached?: number;
+      savedUsd?: number;
     },
   ): void {
     const verdicts = results.flatMap((r) => r.runs);
@@ -105,7 +106,7 @@ export class Reporter {
     const failed = results.filter((r) => !r.ok).length;
     const skipped = extra?.skipped ?? 0;
     const skippedPart = skipped > 0 ? `, ${skipped} skipped` : "";
-    const cachedPart = (extra?.cached ?? 0) > 0 ? `, ${extra?.cached} cached` : "";
+    const cachedPart = (extra?.cached ?? 0) > 0 ? `, ${extra?.cached} cached${(extra?.savedUsd ?? 0) > 0 ? ` (saved $${extra?.savedUsd?.toFixed(2)})` : ""}` : "";
     const costs = [...verdicts.map((v) => v.costUsd), ...(extra?.skippedRunCosts ?? [])];
     const cost = costs.length === 0 && (extra?.cached ?? 0) > 0 ? "cost $0.00" : costLine(costs, extra?.estimatedUsd);
     this.write(`${failed} failed${skippedPart} of ${results.length + skipped + (extra?.cached ?? 0)} · runs ${costs.length} · ${cost}${cachedPart}\n`);

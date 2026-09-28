@@ -153,6 +153,7 @@ purpose:
 | `--no-early-stop` | | let the agent finish its turn instead of stopping it once a skill is picked; costs more; not with `--batch` |
 | `--budget <usd>` | | stop starting new runs once the spend estimate reaches this; the rest is reported as skipped |
 | `--config-dir <dir>` | | see [Where skills come from](#where-skills-come-from) |
+| `--plugin-dir <dir>` | | load a plugin from source for this session; repeatable |
 
 **Reports**
 
