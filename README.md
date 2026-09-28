@@ -41,6 +41,7 @@ skillcheck run --only 2,5     # confirm what the batch flagged with real runs
 | `lint` | short or look-alike descriptions, free |
 | `list` | the skills and commands Claude Code sees, free |
 | `run` | runs the cases; `--batch` for the cheap pre-check |
+| `suggest` | proposes description fixes from a `run --json` report |
 
 Every option, the default file lookup and exit codes are in
 [Commands](docs/commands.md).
