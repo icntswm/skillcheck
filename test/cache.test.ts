@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
-import { caseFingerprint, mergeCache, nestedCommandFiles, parseCache, routingContext, type CacheEntry } from "../src/cache.js";
+import { caseFingerprint, memoryFiles, mergeCache, nestedCommandFiles, parseCache, routingContext, type CacheEntry } from "../src/cache.js";
 import type { Case } from "../src/cases.js";
 
 const base: Case = {
@@ -51,6 +51,35 @@ describe("result cache", () => {
     expect(() => parseCache(JSON.stringify({ ...valid, entries: [{ ...valid.entries[0]!, case: { ...valid.entries[0]!.case, runs: [{ ...validRun, ok: false }] } }] }))).toThrow("entries have the wrong shape");
   });
 
+  it("follows symlinks to nested commands and keys plugin roots by name", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "skillcheck-cache-"));
+    try {
+      const target = path.join(root, "shared");
+      mkdirSync(target);
+      writeFileSync(path.join(target, "review.md"), "---\ndescription: review\n---\n");
+      mkdirSync(path.join(root, "a", "commands"), { recursive: true });
+      symlinkSync(target, path.join(root, "a", "commands", "team"));
+      mkdirSync(path.join(root, "b", "commands", "team"), { recursive: true });
+      writeFileSync(path.join(root, "b", "commands", "team", "review.md"), "---\ndescription: review\n---\n");
+      expect(nestedCommandFiles([path.join(root, "a")])).toEqual([path.join(root, "a", "commands", "team", "review.md")]);
+      const read = (name: string) => readFileSync(name, "utf8");
+      const a = routingContext([], read, [{ label: "plugin:a", path: path.join(root, "a") }]);
+      const b = routingContext([], read, [{ label: "plugin:b", path: path.join(root, "b") }]);
+      expect(a).not.toBe(b);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lists the user CLAUDE.md and those in cwd and above it", () => {
+    const files = memoryFiles("/cfg", "/work/repo").map((f) => f.path);
+    expect(files).toContain("/cfg/CLAUDE.md");
+    expect(files).toContain("/work/repo/CLAUDE.md");
+    expect(files).toContain("/work/repo/.claude/CLAUDE.md");
+    expect(files).toContain("/work/CLAUDE.local.md");
+    expect(files).toContain("/CLAUDE.md");
+  });
+
   it("includes nested command frontmatter but not body in routing context", () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "skillcheck-cache-"));
     try {
@@ -59,11 +88,11 @@ describe("result cache", () => {
       writeFileSync(file, "---\ndescription: review one\n---\nbody one\n");
       expect(nestedCommandFiles([root])).toEqual([file]);
       const read = (name: string) => readFileSync(name, "utf8");
-      const first = routingContext([], read, [root]);
+      const first = routingContext([], read, [{ label: "user", path: root }]);
       writeFileSync(file, "---\ndescription: review one\n---\nbody two\n");
-      expect(routingContext([], read, [root])).toBe(first);
+      expect(routingContext([], read, [{ label: "user", path: root }])).toBe(first);
       writeFileSync(file, "---\ndescription: review two\n---\nbody two\n");
-      expect(routingContext([], read, [root])).not.toBe(first);
+      expect(routingContext([], read, [{ label: "user", path: root }])).not.toBe(first);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -33,7 +33,7 @@ import { runPool } from "./pool.js";
 import { oneLine, Reporter, type ReportStream } from "./report.js";
 import { buildReport, type SuiteReport } from "./results.js";
 import { readVersion } from "./version.js";
-import { caseFingerprint, mergeCache, parseCache, routingContext, type CacheEntry, type CacheFile } from "./cache.js";
+import { caseFingerprint, memoryFiles, mergeCache, parseCache, routingContext, type CacheEntry, type CacheFile } from "./cache.js";
 
 const USAGE = `skillcheck — regression tests for agent skill routing
 
@@ -794,9 +794,18 @@ async function runCommand(file: string, flags: Flags, io: Io, deps: { adapter?: 
   const selected = applySkillFilter(byOnly, flags.skill);
 
   const docs = flags.cacheFile === undefined ? [] : loadSkillDocs({ cwd: io.cwd, configDir: flags.configDir });
-  // nested commands/ dirs, which loadSkillDocs does not list
-  const roots = flags.cacheFile === undefined ? [] : [...skillRoots({ cwd: io.cwd, configDir: flags.configDir }), ...pluginInstallPaths({ cwd: io.cwd, configDir: flags.configDir })];
-  const context = flags.cacheFile === undefined ? "" : routingContext(docs, undefined, roots);
+  let context = "";
+  if (flags.cacheFile !== undefined) {
+    const where = { cwd: io.cwd, configDir: flags.configDir };
+    const [userRoot, projectRoot] = skillRoots(where) as [string, string];
+    // nested commands/ dirs, which loadSkillDocs does not list
+    const roots = [
+      { label: "user", path: userRoot },
+      { label: "project", path: projectRoot },
+      ...pluginInstallPaths(where).map((p) => ({ label: `plugin:${p.plugin}`, path: p.installPath })),
+    ];
+    context = routingContext(docs, undefined, roots, memoryFiles(userRoot, io.cwd));
+  }
   let canReuseCache = true;
   let agentVersion: string | null = null;
   if (flags.cacheFile !== undefined && adapter.version) {
@@ -944,8 +953,10 @@ async function runIndividually(
   budget: Budget,
   fatal: FatalStop,
 ): Promise<RunOutcome> {
-  const totalRuns = items.reduce((n, item) => n + (item.cached ? 0 : item.runs.length), 0);
-  reporter.header(items.length, repeatLabel(items), 1, totalRuns);
+  // the header counts only what runs now; cached cases are listed under it
+  const live = items.filter((item) => !item.cached);
+  const totalRuns = live.reduce((n, item) => n + item.runs.length, 0);
+  reporter.header(live.length, repeatLabel(live.length > 0 ? live : items), 1, totalRuns);
   for (const item of items) if (item.cached) reporter.caseCached(item.cached);
 
   const jobs = items.filter((item) => !item.cached).flatMap((item) =>

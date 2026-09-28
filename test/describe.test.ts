@@ -188,7 +188,7 @@ describe("loadSkillDocs plugins", () => {
     const on = plugin("on", {});
     const off = plugin("off", {});
     registry(cfg, { "on@mp": [{ scope: "user", installPath: on }], "off@mp": [{ scope: "user", installPath: off }] }, { enabledPlugins: { "off@mp": false } });
-    expect(pluginInstallPaths({ cwd: base, configDir: cfg })).toEqual([on]);
+    expect(pluginInstallPaths({ cwd: base, configDir: cfg })).toEqual([{ plugin: "on", installPath: on }]);
   });
 
   it("skips disabled plugins and project/local scopes for other paths", () => {

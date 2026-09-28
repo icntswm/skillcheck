@@ -53,7 +53,8 @@ function classify(c: CaseReport): Kind {
 }
 
 function testcase(c: CaseReport, kind: Kind, suiteName: string): string {
-  const time = sec(c.runs.reduce((ms, r) => ms + r.durationMs, 0));
+  // a cached case took no time in this run
+  const time = c.cached ? sec(0) : sec(c.runs.reduce((ms, r) => ms + r.durationMs, 0));
   const name = `#${c.id ?? c.index} ${collapse(c.query)}`;
   const open = `      <testcase name="${esc(name)}" classname="${esc(suiteName)}" time="${time}">`;
   if (kind === "passed") return `      <testcase name="${esc(name)}" classname="${esc(suiteName)}" time="${time}"/>`;

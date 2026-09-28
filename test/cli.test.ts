@@ -427,6 +427,25 @@ describe("cli run", () => {
     writeFileSync(skillFile, "---\ndescription: route differently\n---\nchanged body\n");
     expect(await run()).toBe(0);
     expect(calls).toHaveLength(2);
+    // CLAUDE.md is read before the pick, so an edit reruns the case
+    writeFileSync(path.join(tmp, "CLAUDE.md"), "prefer find-bug\n");
+    expect(await run()).toBe(0);
+    expect(calls).toHaveLength(3);
+    writeFileSync(path.join(config, "CLAUDE.md"), "user memory\n");
+    expect(await run()).toBe(0);
+    expect(calls).toHaveLength(4);
+  });
+
+  it("counts only live cases in the header and gives cached JUnit cases no time", async () => {
+    const file = writeCases("cases.json", { cases: [{ query: "q1", expect: ["find-bug"] }, { query: "q2", expect: ["find-bug"] }] });
+    const cache = path.join(tmp, "cache.json");
+    const junit = path.join(tmp, "junit.xml");
+    const adapter = fakeAdapter({ q1: { loaded: ["find-bug"] }, q2: { loaded: ["find-bug"] } });
+    expect(await main(["run", file, "--only", "1", "--cache", cache], { stdout: new Sink(), stderr: new Sink(), cwd: tmp }, { adapter })).toBe(0);
+    const out = new Sink();
+    expect(await main(["run", file, "--cache", cache, "--junit", junit], { stdout: out, stderr: out, cwd: tmp }, { adapter })).toBe(0);
+    expect(out.text).toContain("1 cases × 1 repeat × 1 agent = 1 runs");
+    expect(readFileSync(junit, "utf8")).toMatch(/<testcase name="#1 q1"[^>]* time="0(\.0+)?"/);
   });
 
   it("preserves unselected cache entries and does not charge cached cases to budget", async () => {

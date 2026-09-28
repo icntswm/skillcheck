@@ -22,17 +22,23 @@ export function nestedCommandFiles(roots: string[]): string[] {
 }
 
 function walkCommandFiles(dir: string, nested: boolean): string[] {
-  let entries: fs.Dirent[];
+  let entries: string[];
   try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
+    entries = fs.readdirSync(dir);
   } catch {
     return [];
   }
   const files: string[] = [];
   for (const entry of entries) {
-    const file = path.join(dir, entry.name);
-    if (entry.isDirectory()) files.push(...walkCommandFiles(file, true));
-    else if (nested && entry.name.endsWith(".md") && entry.isFile()) files.push(file);
+    const file = path.join(dir, entry);
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(file); // follows symlinks, like the top-level scanners
+    } catch {
+      continue;
+    }
+    if (stat.isDirectory()) files.push(...walkCommandFiles(file, true));
+    else if (nested && entry.endsWith(".md") && stat.isFile()) files.push(file);
   }
   return files;
 }
@@ -49,10 +55,33 @@ export interface FingerprintSettings {
   timeoutSec: number;
 }
 
+/** A file or dir, named so the key does not depend on where it lives on disk. */
+export interface LabeledPath {
+  label: string;
+  path: string;
+}
+
+/** CLAUDE.md files Claude Code reads: the user one, then cwd and every dir above it. */
+export function memoryFiles(configRoot: string, cwd: string): LabeledPath[] {
+  const out: LabeledPath[] = [{ label: "user/CLAUDE.md", path: path.join(configRoot, "CLAUDE.md") }];
+  for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
+    const rel = path.relative(cwd, dir) || ".";
+    for (const name of ["CLAUDE.md", "CLAUDE.local.md", path.join(".claude", "CLAUDE.md")]) {
+      out.push({ label: path.join(rel, name), path: path.join(dir, name) });
+    }
+    if (path.dirname(dir) === dir) return out;
+  }
+}
+
+/**
+ * Skill and command frontmatter, nested command frontmatter, and the full text of the
+ * memory files (CLAUDE.md), which Claude Code also reads before it picks a skill.
+ */
 export function routingContext(
   docs: SkillDoc[],
   readFile: (file: string) => string = (file) => fs.readFileSync(file, "utf8"),
-  roots: string[] = [],
+  roots: LabeledPath[] = [],
+  memory: LabeledPath[] = [],
 ): string {
   const sorted = [...docs].sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name) || (a.plugin ?? "").localeCompare(b.plugin ?? ""));
   const context: Record<string, unknown>[] = sorted.map((doc) => ({
@@ -61,14 +90,23 @@ export function routingContext(
     plugin: doc.plugin,
     frontmatter: rawFrontmatter(readFile, doc.file),
   }));
-  for (const [rootIndex, root] of roots.entries()) {
-    for (const file of nestedCommandFiles([root])) {
+  for (const root of roots) {
+    for (const file of nestedCommandFiles([root.path])) {
       context.push({
         kind: "command-file",
-        file: `${rootIndex}:${path.relative(root, file)}`,
+        file: `${root.label}:${path.relative(root.path, file)}`,
         frontmatter: rawFrontmatter(readFile, file),
       });
     }
+  }
+  for (const file of memory) {
+    let text: string;
+    try {
+      text = readFile(file.path);
+    } catch {
+      continue; // missing memory file
+    }
+    context.push({ kind: "memory", file: file.label, text });
   }
   return JSON.stringify(context);
 }

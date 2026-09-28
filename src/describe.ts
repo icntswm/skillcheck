@@ -184,9 +184,9 @@ function pluginDocs(configRoot: string, cwd: string): SkillDoc[] {
   });
 }
 
-/** Install dirs of the plugins Claude Code loads for cwd. */
-export function pluginInstallPaths(opts?: { home?: string; cwd?: string; configDir?: string }): string[] {
-  return enabledPlugins(skillRoots(opts)[0] as string, opts?.cwd ?? process.cwd()).map((p) => p.installPath);
+/** The plugins Claude Code loads for cwd, with their install dirs. */
+export function pluginInstallPaths(opts?: { home?: string; cwd?: string; configDir?: string }): { plugin: string; installPath: string }[] {
+  return enabledPlugins(skillRoots(opts)[0] as string, opts?.cwd ?? process.cwd());
 }
 
 function enabledPlugins(configRoot: string, cwd: string): { plugin: string; installPath: string }[] {

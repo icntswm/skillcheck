@@ -149,18 +149,18 @@ does not block unrelated pull requests, but it still shows in the comment.
 
 `--cache <file>` (the action's `cache` input) skips a case that passed before
 when nothing that affects its routing changed: the case itself, the frontmatter
-of any skill or command, the model, the agent and its version. It does not work
-with `batch: true`.
-Failed and skipped cases always run again. Reused cases are marked cached and
-cost nothing.
+of any skill or command, `CLAUDE.md` files, the model, the timeout, the agent
+and its version. It does not work with `batch: true`. Failed and skipped cases
+always run again. Reused cases are marked cached and cost nothing.
 
 Editing a skill's body (everything after the frontmatter) does not invalidate
 the cache, since only descriptions and other frontmatter affect routing.
 Editing any description, installing a plugin, or using a new Claude Code
 version reruns everything; the action installs the latest version by default,
 so pin it with `claude-code-version` when needed. If the version cannot be read,
-nothing is reused and the cache file is left as is. The agent's default model is not part of the key: pin the
-model (`model` input, `--model` or the suite's `model`) when you use the cache.
+nothing is reused and the cache file is left as is. The agent's default model
+is not part of the key: pin the model (`model` input, `--model` or the suite's
+`model`) when you use the cache.
 
 ```yaml
 - uses: actions/cache/restore@v4
