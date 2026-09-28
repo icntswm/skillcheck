@@ -7,6 +7,7 @@ in short form, `skillcheck --version` the installed version.
 |---|---|---|
 | [`init`](#init) | writes a starter cases file listing your skills | none |
 | [`gen`](#gen) | drafts cases from your skill descriptions | one per 8 skills |
+| [`suggest`](#suggest) | proposes description fixes from routing failures | one per 8 skills |
 | [`import`](#import) | turns a skill-creator trigger eval set into cases | none |
 | [`check`](#check) | validates the cases file | none |
 | [`lint`](#lint) | static checks on descriptions and cases | none |
@@ -68,6 +69,40 @@ batch call each. The result is a draft to review; see
 | `--per-skill <n>` | requests that should load each skill (default 4); near misses are half that |
 | `-o, --out <file>` | write the cases there instead of stdout, as JSON if the name ends in `.json`; `--force` overwrites |
 | `--append <file>` | add the draft to an existing cases file: by default only for skills it has no cases for, skipping requests it already has, keeping its comments |
+
+## suggest
+
+```
+skillcheck suggest <report.json> [--skill a,b] [-m <model>] [-j <n>] [--timeout <sec>]
+                         [--config-dir <dir>] [--plugin-dir <dir>] [--json <path>|-]
+```
+
+Reads a report made by `skillcheck run --json`, finds confused skills with
+descriptions on disk, and asks the model for bounded description edits. Review
+the suggestions, edit the descriptions, then rerun `skillcheck run` to confirm.
+Nothing is written to your files.
+
+The model sees the failing requests, what loaded instead, and up to five passing
+requests per skill that must keep working. Runs that errored or that the report
+diagnosed as a model limit are left out, and so are skills the agent could not
+see in that run: those need a setup fix, not a new description. The old text
+shown includes `when_to_use` when the skill has it; the suggestion is one
+`description` to replace both.
+
+A better description is not always enough. When the agent can answer a request
+on its own, such as running `git log` for a question about history, it may
+skip the skill whatever the description says; the rerun shows whether the edit
+helped.
+
+| Option | Meaning |
+|---|---|
+| `--skill a,b` | suggest only these skills |
+| `-m, --model <name>` | model passed to the agent |
+| `-j, --jobs <n>` | concurrent groups of up to eight skills |
+| `--timeout <sec>` | per-call timeout |
+| `--config-dir <dir>` | config directory containing skill descriptions |
+| `--plugin-dir <dir>` | plugin source directory; repeatable |
+| `--json <path>` | write machine-readable suggestions; `-` writes JSON to stdout and terminal text to stderr |
 
 ## import
 

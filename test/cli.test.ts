@@ -1707,3 +1707,118 @@ describe("cli gen", () => {
     expect(readFileSync(file, "utf8")).toBe(before);
   });
 });
+
+describe("cli suggest", () => {
+  function config(): string {
+    const dir = path.join(tmp, "empty-config");
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  function skills(names: string[]): void {
+    for (const name of names) {
+      const dir = path.join(tmp, ".claude", "skills", name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, "SKILL.md"), `---\ndescription: old ${name}\n---\n`);
+    }
+  }
+
+  function report(file: string, confusion: unknown[] = [{ expected: "alpha", got: "beta", count: 1 }]): string {
+    return writeCases(file, {
+      tool: "skillcheck", cases: [{ query: "migrate the schema", expect: ["alpha"], expect_any: [], forbid: [], first: null, status: "failed", runs: [{ ok: false, error: null, loaded: ["beta"] }] }], confusion,
+    });
+  }
+
+  function adapter(calls: BatchOptions[], answer: Partial<BatchResult> = {}): AgentAdapter {
+    return { name: "claude", async run(): Promise<RunResult> { throw new Error("run must not be used"); }, async runBatch(opts): Promise<BatchResult> {
+      calls.push(opts);
+      return { structured: { suggestions: [{ skill: "alpha", description: "new alpha", reason: "clearer" }] }, text: "", costUsd: 0.12, error: null, durationMs: 1, ...answer };
+    } };
+  }
+
+  it("does not call the model for an empty confusion report", async () => {
+    const calls: BatchOptions[] = [];
+    const out = new Sink();
+    expect(await main(["suggest", report("empty.json", []), "--config-dir", config()], { stdout: out, stderr: out, cwd: tmp }, { adapter: adapter(calls) })).toBe(0);
+    expect(out.text).toContain("nothing to suggest");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("suggests a description from project skills and reports evidence", async () => {
+    skills(["alpha", "beta"]);
+    const calls: BatchOptions[] = [];
+    const out = new Sink();
+    const code = await main(["suggest", report("report.json"), "--config-dir", config()], { stdout: out, stderr: out, cwd: tmp }, { adapter: adapter(calls) });
+    expect(code).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.prompt).toContain("old alpha");
+    expect(calls[0]!.prompt).toContain("old beta");
+    expect(calls[0]!.prompt).toContain("migrate the schema");
+    expect(out.text).toContain("why: clearer");
+    expect(out.text).toContain("- old alpha");
+    expect(out.text).toContain("+ new alpha");
+    expect(out.text).toContain("suggested 1 descriptions");
+  });
+
+  it("writes JSON to stdout and keeps terminal text on stderr", async () => {
+    skills(["alpha", "beta"]);
+    const out = new Sink();
+    const err = new Sink();
+    expect(await main(["suggest", report("report.json"), "--config-dir", config(), "--json", "-"], { stdout: out, stderr: err, cwd: tmp }, { adapter: adapter([]) })).toBe(0);
+    expect(JSON.parse(out.text).suggestions[0].new).toBe("new alpha");
+    expect(err.text).toContain("why: clearer");
+  });
+
+  it("validates --skill and handles model errors", async () => {
+    skills(["alpha", "beta"]);
+    const unknown = new Sink();
+    expect(await main(["suggest", report("report.json"), "--config-dir", config(), "--skill", "ghost"], { stdout: unknown, stderr: unknown, cwd: tmp }, { adapter: adapter([]) })).toBe(2);
+    expect(unknown.text).toContain("unknown skill: ghost");
+    const failed = new Sink();
+    expect(await main(["suggest", report("report.json"), "--config-dir", config()], { stdout: failed, stderr: failed, cwd: tmp }, { adapter: adapter([], { structured: null, costUsd: null, error: "failed" }) })).toBe(2);
+    expect(failed.text).toContain("no usable suggestions");
+    const bad = writeCases("bad.json", { cases: [] });
+    expect(await main(["suggest", bad], { stdout: failed, stderr: failed, cwd: tmp })).toBe(2);
+    expect(failed.text).toContain("not a skillcheck --json report");
+  });
+
+  it("prints a long suggestion in full", async () => {
+    skills(["alpha", "beta"]);
+    const long = `Use alpha for ${"schema migrations and ".repeat(8)}nothing else`;
+    const out = new Sink();
+    expect(await main(["suggest", report("report.json"), "--config-dir", config()], { stdout: out, stderr: out, cwd: tmp }, { adapter: adapter([], { structured: { suggestions: [{ skill: "alpha", description: long, reason: "clearer" }] } }) })).toBe(0);
+    expect(out.text).toContain(`+ ${long.replace(/\s+/g, " ")}\n`);
+  });
+
+  it("skips diagnosed runs and unavailable skills without a model call", async () => {
+    skills(["alpha", "beta"]);
+    const calls: BatchOptions[] = [];
+    const diagnosed = writeCases("diagnosed.json", {
+      tool: "skillcheck", cases: [{ query: "q", expect: ["alpha"], expect_any: [], forbid: [], first: null, status: "failed", runs: [{ ok: false, error: null, diagnosis: "model limit", loaded: ["beta"] }] }],
+      confusion: [{ expected: "alpha", got: "beta", count: 1 }],
+    });
+    const out = new Sink();
+    expect(await main(["suggest", diagnosed, "--config-dir", config()], { stdout: out, stderr: out, cwd: tmp }, { adapter: adapter(calls) })).toBe(0);
+    expect(out.text).toContain("no routing failures a description could fix");
+    const hidden = writeCases("hidden.json", {
+      tool: "skillcheck", unavailable: ["alpha"], cases: [{ query: "q", expect: ["alpha"], expect_any: [], forbid: [], first: null, status: "failed", runs: [{ ok: false, error: null, loaded: [] }] }],
+      confusion: [{ expected: "alpha", got: "(nothing)", count: 1 }],
+    });
+    const out2 = new Sink();
+    expect(await main(["suggest", hidden, "--config-dir", config()], { stdout: out2, stderr: out2, cwd: tmp }, { adapter: adapter(calls) })).toBe(0);
+    expect(out2.text).toContain("did not see alpha");
+    expect(out2.text).toContain("nothing to suggest: the agent did not see any of the confused skills");
+    expect(out2.text).not.toContain("no descriptions on disk");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("treats an empty answer as no changes and keeps an unknown cost null", async () => {
+    skills(["alpha", "beta"]);
+    const out = new Sink();
+    expect(await main(["suggest", report("report.json"), "--config-dir", config()], { stdout: out, stderr: out, cwd: tmp }, { adapter: adapter([], { structured: { suggestions: [] } }) })).toBe(0);
+    expect(out.text).toContain("no description changes suggested");
+    const json = new Sink();
+    expect(await main(["suggest", report("report.json"), "--config-dir", config(), "--json", "-"], { stdout: json, stderr: new Sink(), cwd: tmp }, { adapter: adapter([], { costUsd: null }) })).toBe(0);
+    expect(JSON.parse(json.text).costUsd).toBeNull();
+  });
+});

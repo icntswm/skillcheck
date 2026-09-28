@@ -24,6 +24,7 @@ import {
 import { confusion } from "./confusion.js";
 import { loadSkillDocs, pluginInstallPaths, skillRoots, sourcePlugins, type SkillDoc } from "./describe.js";
 import { GEN_SCHEMA, buildGenPrompt, caseEntry, genSuite, orderCases, parseGenAnswer, type GenCase } from "./gen.js";
+import { SUGGEST_SCHEMA, buildSuggestPrompt, parseSuggestAnswer, suggestEvidence, type Suggestion } from "./suggest.js";
 import { aggregate, judge, type CaseResult, type RunVerdict } from "./judge.js";
 import { evalSetToSuite, type ImportedSuite } from "./import.js";
 import { toJunit } from "./junit.js";
@@ -46,6 +47,7 @@ Usage:
   skillcheck import <file> --skill <name>
                                       turn a skill-creator trigger eval set into cases
   skillcheck gen [options]            draft cases from skill descriptions (one model call per 8 skills)
+  skillcheck suggest <report.json>    propose description fixes from routing failures
 
 run options:
   -a, --agent <name>     agent to route with (default: suite or claude)
@@ -96,6 +98,10 @@ gen options:
       --append <file>    add the draft to an existing cases file (default: skills it lacks)
   -m, -j, --timeout and --config-dir work as for run
 
+suggest options:
+      --skill <a,b>      suggest only these skills
+  -m, -j, --timeout, --config-dir, --plugin-dir and --json work as for run
+
 common:
   -h, --help             show this help
       --version          show version
@@ -107,7 +113,7 @@ nothing reaches the model and nothing is billed, even when not logged in.
 Exit codes: 0 all passed, 1 some case failed or was skipped, 2 config or environment error.
 `;
 
-const COMMANDS = ["run", "check", "lint", "list", "init", "import", "gen"];
+const COMMANDS = ["run", "check", "lint", "list", "init", "import", "gen", "suggest"];
 
 const OPTIONS = {
   help: { type: "boolean", short: "h", default: false },
@@ -328,6 +334,7 @@ export async function main(
     if (command === "init") return await initCommand(positionals[1], flags, io, deps);
     if (command === "import") return importCommand(positionals[1], flags, io);
     if (command === "gen") return await genCommand(flags, io, deps);
+    if (command === "suggest") return await suggestCommand(positionals[1], flags, io, deps);
     const file = casesFile(positionals[1], io);
     if (command === "run") return await runCommand(file, flags, io, deps);
     return await checkCommand(file, flags, io);
@@ -638,6 +645,123 @@ async function genCommand(flags: Flags, io: Io, deps: { adapter?: AgentAdapter }
   }
   io.stdout.write(`wrote ${flags.out} (${counts})\n`);
   return 0;
+}
+
+async function suggestCommand(positional: string | undefined, flags: Flags, io: Io, deps: { adapter?: AgentAdapter }): Promise<number> {
+  if (positional === undefined) throw new UsageError("suggest needs the --json report file");
+  let report: unknown;
+  try {
+    report = JSON.parse(await readFile(path.resolve(io.cwd, positional), "utf8"));
+  } catch (e) {
+    throw new UsageError(`cannot read ${positional}: ${(e as Error).message}`);
+  }
+  if (typeof report !== "object" || report === null || Array.isArray(report) ||
+    !Array.isArray((report as Record<string, unknown>).cases) || !Array.isArray((report as Record<string, unknown>).confusion)) {
+    throw new UsageError(`${positional} is not a skillcheck --json report`);
+  }
+  const suiteReport = report as SuiteReport;
+  if (suiteReport.confusion.length === 0) {
+    io.stdout.write(`nothing to suggest: no routing failures in ${positional}\n`);
+    return 0;
+  }
+
+  const docs = loadSkillDocs({ cwd: io.cwd, configDir: flags.configDir, pluginDirs: flags.pluginDirs });
+  const byName = new Map(docs.map((doc) => [doc.name, doc]));
+  const confusedNames = [...new Set(suiteReport.confusion.flatMap((pair) => [
+    ...pair.expected.split("|"), ...(pair.got === "(nothing)" ? [] : [pair.got]),
+  ]))];
+  // the agent could not see these, so no description edit can help
+  const unavailable = new Set(Array.isArray(suiteReport.unavailable) ? suiteReport.unavailable : []);
+  const hidden = confusedNames.filter((name) => unavailable.has(name));
+  if (hidden.length > 0) io.stderr.write(`note: the agent did not see ${hidden.join(", ")} in that run; fix the setup, not the description\n`);
+  let targetNames = confusedNames.filter((name) => byName.has(name) && !unavailable.has(name));
+  if (flags.skill !== undefined) {
+    const names = flags.skill.split(",").map((name) => name.trim()).filter((name) => name !== "");
+    const unknown = names.filter((name, i) => !byName.has(name) && names.indexOf(name) === i);
+    if (unknown.length > 0) throw new UsageError(`unknown skill: ${unknown.join(", ")}`);
+    const selected = new Set(names);
+    targetNames = targetNames.filter((name) => selected.has(name));
+  }
+  if (targetNames.length === 0) {
+    const missing = confusedNames.filter((name) => !byName.has(name) && !unavailable.has(name));
+    const why = flags.skill !== undefined ? "--skill names none of the confused skills that can be fixed"
+      : missing.length > 0 ? `no descriptions on disk for ${missing.join(", ")}`
+      : "the agent did not see any of the confused skills";
+    io.stderr.write(`nothing to suggest: ${why}\n`);
+    return 0;
+  }
+  const evidence = suggestEvidence(suiteReport, targetNames);
+  const limitsOnly = targetNames.filter((name) => evidence.get(name)?.failing.length === 0);
+  if (limitsOnly.length > 0) io.stderr.write(`note: skipped ${limitsOnly.join(", ")}: no routing failures left after errors and diagnosed runs\n`);
+  targetNames = targetNames.filter((name) => !limitsOnly.includes(name));
+  if (targetNames.length === 0) {
+    io.stdout.write(`nothing to suggest: no routing failures a description could fix in ${positional}\n`);
+    return 0;
+  }
+  const targets = targetNames.map((name) => byName.get(name)!);
+  const adapter = pickAdapter(flags.agent ?? "claude", io, deps);
+  if (!adapter) return 2;
+  if (!adapter.runBatch) throw new UsageError(`agent ${adapter.name} cannot suggest descriptions`);
+  const groups: SkillDoc[][] = [];
+  for (let i = 0; i < targets.length; i += 8) groups.push(targets.slice(i, i + 8));
+  const results = await runPool(groups, flags.jobs, async (group) => {
+    try {
+      const result = await adapter.runBatch!({
+        prompt: buildSuggestPrompt(group, docs, evidence),
+        schema: SUGGEST_SCHEMA,
+        model: flags.model,
+        timeoutMs: flags.timeoutSec * 1000,
+        configDir: flags.configDir,
+        pluginDirs: flags.pluginDirs,
+      });
+      if (result.error) {
+        io.stderr.write(`skillcheck: suggest failed for ${group.map((doc) => doc.name).join(", ")}: ${result.error}\n`);
+        return { suggestions: [], dropped: 0, costUsd: result.costUsd, failed: true };
+      }
+      const parsed = parseSuggestAnswer(result.structured, group);
+      return { ...parsed, costUsd: result.costUsd, failed: false };
+    } catch (e) {
+      io.stderr.write(`skillcheck: suggest failed for ${group.map((doc) => doc.name).join(", ")}: ${(e as Error).message}\n`);
+      return { suggestions: [], dropped: 0, costUsd: null, failed: true };
+    }
+  });
+  const successful = results.filter((result): result is NonNullable<typeof result> => result !== undefined && !result.failed);
+  const cost = genCost(results.map((result) => result?.costUsd ?? null));
+  if (successful.length === 0) {
+    io.stderr.write(`skillcheck: suggest got no usable suggestions from the model (cost $${cost})\n`);
+    return 2;
+  }
+  const dropped = successful.reduce((sum, result) => sum + result.dropped, 0);
+  const bySkill = new Map<string, Suggestion>();
+  for (const suggestion of successful.flatMap((result) => result.suggestions)) if (!bySkill.has(suggestion.skill)) bySkill.set(suggestion.skill, suggestion);
+  const suggestions = targets.flatMap((doc) => {
+    const suggestion = bySkill.get(doc.name);
+    return suggestion ? [{ ...suggestion, old: doc.description, file: path.relative(io.cwd, doc.file) || "." }] : [];
+  });
+  if (suggestions.length === 0 && dropped === 0) {
+    // an empty answer is the model's verdict that the descriptions are fine
+    io.stdout.write(`no description changes suggested (cost $${cost})\n`);
+    return 0;
+  }
+  if (suggestions.length === 0) {
+    io.stderr.write(`skillcheck: suggest got no usable suggestions from the model (cost $${cost})\n`);
+    return 2;
+  }
+  const json = suggestions.map((suggestion) => ({ skill: suggestion.skill, file: suggestion.file, old: suggestion.old, new: suggestion.description, reason: suggestion.reason }));
+  const payload = JSON.stringify({ file: positional, suggestions: json, costUsd: results.some((result) => result?.costUsd == null) ? null : results.reduce((sum, result) => sum + (result?.costUsd ?? 0), 0) }, null, 2) + "\n";
+  const terminal = suggestions.map((suggestion) => `${suggestion.skill}  ${suggestion.file}\n  why: ${flat(suggestion.reason)}\n  - ${flat(suggestion.old)}\n  + ${flat(suggestion.description)}\n`).join("");
+  if (flags.json === "-") io.stdout.write(payload); else io.stdout.write(terminal);
+  if (flags.json === "-") io.stderr.write(terminal);
+  if (flags.json !== undefined && flags.json !== "-") writeReportFile(path.resolve(io.cwd, flags.json), payload, "--json");
+  io.stderr.write(`suggested ${suggestions.length} descriptions for ${targets.length} skills, cost $${cost}\n`);
+  if (dropped > 0) io.stderr.write(`note: dropped ${dropped} suggestions from the model\n`);
+  io.stderr.write("edit the descriptions, then rerun skillcheck run to confirm\n");
+  return 0;
+}
+
+/** Whitespace collapsed to one line, never cut: suggest output is meant to be copied. */
+function flat(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }
 
 function genCost(costs: (number | null)[]): string {
