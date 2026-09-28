@@ -89,6 +89,11 @@ see in that run: those need a setup fix, not a new description. The old text
 shown includes `when_to_use` when the skill has it; the suggestion is one
 `description` to replace both.
 
+A better description is not always enough. When the agent can answer a request
+on its own, such as running `git log` for a question about history, it may
+skip the skill whatever the description says; the rerun shows whether the edit
+helped.
+
 | Option | Meaning |
 |---|---|
 | `--skill a,b` | suggest only these skills |
