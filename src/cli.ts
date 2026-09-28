@@ -749,9 +749,11 @@ async function suggestCommand(positional: string | undefined, flags: Flags, io: 
   }
   const json = suggestions.map((suggestion) => ({ skill: suggestion.skill, file: suggestion.file, old: suggestion.old, new: suggestion.description, reason: suggestion.reason }));
   const payload = JSON.stringify({ file: positional, suggestions: json, costUsd: results.some((result) => result?.costUsd == null) ? null : results.reduce((sum, result) => sum + (result?.costUsd ?? 0), 0) }, null, 2) + "\n";
-  const terminal = suggestions.map((suggestion) => `${suggestion.skill}  ${suggestion.file}\n  why: ${flat(suggestion.reason)}\n  - ${flat(suggestion.old)}\n  + ${flat(suggestion.description)}\n`).join("");
-  if (flags.json === "-") io.stdout.write(payload); else io.stdout.write(terminal);
-  if (flags.json === "-") io.stderr.write(terminal);
+  const terminalOut: ReportStream = flags.json === "-" ? io.stderr : io.stdout;
+  const paint = (code: string, text: string): string => terminalOut.isTTY === true && !process.env.NO_COLOR ? `\u001b[${code}m${text}\u001b[0m` : text;
+  const terminal = suggestions.map((suggestion) => `${paint("1", suggestion.skill)}  ${paint("2", suggestion.file)}\n  ${paint("2", `why: ${flat(suggestion.reason)}`)}\n  ${paint("31", `- ${flat(suggestion.old)}`)}\n  ${paint("32", `+ ${flat(suggestion.description)}`)}\n`).join("");
+  if (flags.json === "-") io.stdout.write(payload);
+  terminalOut.write(terminal);
   if (flags.json !== undefined && flags.json !== "-") writeReportFile(path.resolve(io.cwd, flags.json), payload, "--json");
   io.stderr.write(`suggested ${suggestions.length} descriptions for ${targets.length} skills, cost $${cost}\n`);
   if (dropped > 0) io.stderr.write(`note: dropped ${dropped} suggestions from the model\n`);
