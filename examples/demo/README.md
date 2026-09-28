@@ -18,7 +18,8 @@ cp -R examples/demo/skills/. /tmp/demo-broken/skills/
 cp -R examples/demo/broken/. /tmp/demo-broken/skills/
 
 skillcheck lint examples/demo/skillcheck.yaml --config-dir /tmp/demo-broken
-skillcheck run examples/demo/skillcheck.yaml --batch --config-dir /tmp/demo-broken
+skillcheck run examples/demo/skillcheck.yaml --batch --config-dir /tmp/demo-broken --json report.json
+skillcheck suggest report.json --config-dir /tmp/demo-broken
 skillcheck run examples/demo/skillcheck.yaml --skill test-guard,find-bug --config-dir /tmp/demo-broken
 ```
 

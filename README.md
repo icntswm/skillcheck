@@ -16,7 +16,7 @@ users do.
 
 <sub>A real run on the [demo](examples/demo): one description got wider and
 started taking its neighbour's requests. The free `lint` flags it, one batch
-call finds both misrouted requests.</sub>
+call finds both misrouted requests, and `suggest` proposes fixed descriptions.</sub>
 
 ## Quick start
 
