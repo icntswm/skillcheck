@@ -1782,6 +1782,24 @@ describe("cli suggest", () => {
     expect(failed.text).toContain("not a skillcheck --json report");
   });
 
+  it("colors the old and new descriptions on a terminal", async () => {
+    skills(["alpha", "beta"]);
+    const saved = process.env.NO_COLOR;
+    delete process.env.NO_COLOR;
+    try {
+      const tty = new Sink();
+      Object.defineProperty(tty, "isTTY", { value: true });
+      expect(await main(["suggest", report("report.json"), "--config-dir", config()], { stdout: tty, stderr: tty, cwd: tmp }, { adapter: adapter([]) })).toBe(0);
+      expect(tty.text).toContain("\u001b[31m- old alpha\u001b[0m");
+      expect(tty.text).toContain("\u001b[32m+ new alpha\u001b[0m");
+      const plain = new Sink();
+      expect(await main(["suggest", report("report.json"), "--config-dir", config()], { stdout: plain, stderr: plain, cwd: tmp }, { adapter: adapter([]) })).toBe(0);
+      expect(plain.text).not.toContain("\u001b[");
+    } finally {
+      if (saved !== undefined) process.env.NO_COLOR = saved;
+    }
+  });
+
   it("prints a long suggestion in full", async () => {
     skills(["alpha", "beta"]);
     const long = `Use alpha for ${"schema migrations and ".repeat(8)}nothing else`;
