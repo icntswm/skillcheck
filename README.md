@@ -105,7 +105,8 @@ with the full run in 34 checks out of 34.
 The action tests only the skills in your repository, comments the report on the
 pull request and writes JUnit, JSON and Markdown reports. `--budget` caps the
 spend; `--baseline` with `--only-new-failures` compares with `main` and fails
-only on new failures. Run it after you rewrite a description, add a skill that
+only on new failures; `--cache` skips cases that passed before when nothing
+that affects their routing changed. Run it after you rewrite a description, add a skill that
 sounds like an existing one, install a plugin, or switch models.
 
 ## Documentation
